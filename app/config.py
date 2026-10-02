@@ -9,4 +9,4 @@ class Config:
 
     MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '50000'))
 
-    PISYA = 0
+    GIT_TEST = 0
