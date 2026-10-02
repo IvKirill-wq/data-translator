@@ -1,6 +1,5 @@
 .venv/
 __pycache__/
+app/__pycache__/
 .env
-.flaskenv
-.python-version
 requirements.lock.txt

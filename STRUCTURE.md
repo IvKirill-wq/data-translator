@@ -8,103 +8,86 @@
 
 ## 1. Главная идея: четыре слоя и одно правило
 
-Проект делает одну вещь: берёт значения из колонки таблицы, переводит их и
-создаёт копию таблицы с переведёнными значениями. Но участвуют в этом четыре
-совершенно разных вида кода, и если свалить их в один файл, проект станет
-неподдерживаемым примерно на третьей неделе.
+Проект делает одну вещь: берёт значения из колонки результата запроса,
+переводит их и складывает пары «значение — перевод» в таблицу-словарь в другой
+базе. Но участвуют в этом четыре совершенно разных вида кода, и если свалить
+их в один файл, проект станет неподдерживаемым примерно на третьей неделе.
 
 ```
 ┌──────────────────────────────────────────────┐
-│  views + forms + templates + static          │  Flask: HTML, формы, JSON-ручки
+│  routes + forms + templates + static         │  Flask: HTML и одна форма
 │  «что видит пользователь»                    │
 └───────────────┬──────────────────────────────┘
                 │ вызывает
 ┌───────────────▼──────────────────────────────┐
-│  jobs                                        │  фоновые задания, прогресс, отмена
-│  «долгая работа вне HTTP-запроса»            │
-└───────────────┬──────────────────────────────┘
-                │ вызывает
-┌───────────────▼──────────────────────────────┐
-│  core                                        │  сценарий перевода, кэш, глоссарий
-│  «бизнес-логика, ничего не знает о Flask»    │
+│  core                                        │  сценарий перевода, кэш,
+│  «бизнес-логика, ничего не знает о Flask»    │  глоссарий, защита, пайплайн
 └───────────────┬──────────────────────────────┘
                 │ вызывает через протокол
 ┌───────────────▼──────────────────────────────┐
-│  db                                          │  два адаптера: ClickHouse, PostgreSQL
-│  «как достать данные и создать таблицу»      │
+│  db                                          │  два адаптера: ClickHouse,
+│  «как выполнить запрос и записать словарь»   │  PostgreSQL
 └──────────────────────────────────────────────┘
 ```
 
-**Правило зависимостей: стрелки идут только вниз.**
+Правило одно: **зависимости идут только вниз**. `core` не импортирует Flask,
+`db` не знает, что его данные кому-то переводят.
 
-- `views` знает про `forms` и `jobs`. Про драйверы БД — не знает.
-- `core` знает про `db` — но только через протокол (см. раздел 4). Про Flask
-  не знает вообще: в `core/` не должно быть ни одного `from flask import ...`.
-- `db` не знает ни про `core`, ни про Flask.
-
-Проверка, что правило соблюдается, простая: **`core/` и `db/` должны
-импортироваться и работать из обычного скрипта без Flask.** Если это так —
-вы сможете отлаживать самую рискованную часть проекта в консоли за секунды,
-вместо того чтобы каждый раз щёлкать по веб-форме. Это тот же приём, что в
-проекте forecast_SP: ядро отдельно, обёртка тонкая.
+Четвёртый слой — `jobs` — в v1 отсутствует сознательно, см. раздел 6.
 
 ---
 
 ## 2. Итоговое дерево файлов
 
 ```
-data_translator/
+data-translator/
 ├── translator.py                  точка входа: app = create_app()
-├── requirements.txt
-├── .flaskenv                      FLASK_APP, FLASK_DEBUG
-├── .env                           пароли и адреса (в git не кладём)
-├── docs/
-│   └── STRUCTURE.md               этот файл
+├── requirements.txt               прямые зависимости
+├── requirements.lock.txt          слепок окружения
+├── .flaskenv                      FLASK_APP
+├── .env                           SECRET_KEY и адрес движка перевода (в git не кладём)
+├── STRUCTURE.md                   этот файл
 ├── scripts/
 │   └── smoke.py                   прогон пайплайна из консоли, без Flask
 └── app/
     ├── __init__.py                фабрика create_app()
     ├── config.py                  чтение настроек из окружения
-    ├── forms.py                   формы WTForms
-    │
-    ├── views/
-    │   ├── __init__.py
-    │   ├── main.py                GET/POST страницы index
-    │   ├── api.py                 JSON-ручки для подсказок
-    │   └── jobs.py                JSON-ручки прогресса и отмены
+    ├── forms.py                   одна форма на все три блока
+    ├── routes.py                  один блюпринт, один обработчик
     │
     ├── db/
     │   ├── __init__.py            фабрика get_adapter()
     │   ├── base.py                протокол DbAdapter + общие типы
-    │   ├── registry.py            реквизиты подключений в памяти, с TTL
     │   ├── clickhouse.py          реализация для ClickHouse
     │   └── postgres.py            реализация для PostgreSQL
     │
     ├── core/
     │   ├── __init__.py
     │   ├── prefilter.py           надо ли вообще переводить это значение
-    │   ├── glossary.py            точные соответствия (ООО → LLC)
+    │   ├── protect.py             что в строке переводить нельзя
+    │   ├── glossary.py            термины по доменам
     │   ├── cache.py               словарь накопленных переводов
     │   ├── translate_client.py    клиент LibreTranslate
     │   └── pipeline.py            сценарий целиком
     │
     ├── jobs/
-    │   ├── __init__.py
-    │   └── registry.py            реестр заданий, потоки, прогресс
+    │   └── registry.py            пусто до раздела 6
     │
     ├── templates/
     │   ├── base.html
     │   └── index.html
     └── static/
-        ├── css/styles.css
-        └── js/index.js            каскад подсказок
+        └── css/styles.css
 ```
 
-Ничего из этого не надо создавать сразу — порядок сборки в разделе 10.
+Ничего из этого не надо создавать сразу — порядок сборки в разделе 11.
+Каталога `static/js/` здесь нет, и это не упущение: см. раздел 8. Файлы в
+`jobs/` лежат пустыми: слой понадобится не сейчас, а когда перестанет
+хватать синхронного обработчика.
 
 ---
 
-## 3. Точка входа и фабрика
+## 3. Точка входа, фабрика и конфиг
 
 ### `translator.py`
 
@@ -128,28 +111,21 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
 
-    from .views.main import bp as main_bp
-    from .views.api import bp as api_bp
-    from .views.jobs import bp as jobs_bp
-
-    app.register_blueprint(main_bp)
-    app.register_blueprint(api_bp, url_prefix="/api")
-    app.register_blueprint(jobs_bp, url_prefix="/api/jobs")
+    from .routes import bp
+    app.register_blueprint(bp)
 
     return app
 ```
 
 **Зачем фабрика, а не глобальный `app = Flask(__name__)`.** Функция, которая
 создаёт приложение, позволяет создать его дважды с разными настройками — это
-нужно для тестов. И она убирает циркулярный импорт: сейчас у вас
-`__init__.py` импортирует `routes`, а `routes` импортирует `app` из
-`__init__.py`. Работает, но ломается, как только файлов станет больше трёх.
+нужно для тестов. И она убирает циркулярный импорт, который неизбежен при
+глобальном объекте: модуль с роутами импортирует `app`, а `app` импортирует
+модуль с роутами.
 
-**Что такое блюпринт.** Это группа роутов, которую можно зарегистрировать в
-приложении. Вместо одного файла с двадцатью `@app.route` у вас три файла по
-своей теме. `url_prefix="/api"` означает, что роут `@bp.route("/tables")`
-внутри `api.py` будет доступен как `/api/tables` — префикс не надо повторять
-в каждом декораторе.
+Обратите внимание на `from .config import Config` — с точкой. `config.py`
+лежит внутри пакета `app`, и без точки Python будет искать модуль `config` в
+корне проекта и не найдёт.
 
 ### `app/config.py`
 
@@ -158,122 +134,69 @@ import os
 
 
 class Config:
-    SECRET_KEY = os.environ["SECRET_KEY"]          # без него Flask-WTF не работает
+    SECRET_KEY = os.environ['SECRET_KEY']
 
-    LIBRETRANSLATE_URL = os.environ["LIBRETRANSLATE_URL"]
-    LIBRETRANSLATE_BATCH = int(os.environ.get("LIBRETRANSLATE_BATCH", "24"))
+    LIBRE_TRANSLATE_URL = os.environ['LIBRE_TRANSLATE_URL']
+    TRANSLATION_BATCH = int(os.environ.get('TRANSLATION_BATCH', '24'))
 
-    # Реквизитов БД здесь НЕТ: их вводит пользователь, см. раздел 3.1.
-    # В конфиге только то, что от пользователя не зависит.
-    CH_PORT = int(os.environ.get("CH_PORT", "8123"))
-    PG_PORT = int(os.environ.get("PG_PORT", "5432"))
-
-    MAX_DISTINCT = int(os.environ.get("MAX_DISTINCT", "50000"))
-    CONN_TTL_SECONDS = int(os.environ.get("CONN_TTL_SECONDS", "3600"))
+    MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '50000'))
 ```
 
-### 3.1. Реквизиты подключения: где они живут
+Два обязательных параметра читаются через `os.environ[...]`, а не
+`os.getenv(...)`. Разница принципиальная: `getenv` вернёт `None`, приложение
+поднимется, и вы узнаете о проблеме через час — `SECRET_KEY = None` молча
+отключает защиту форм, а `None` вместо адреса движка даст непонятную ошибку
+где-то в глубине клиента. `os.environ[...]` падает сразу и с именем
+переменной в тексте ошибки.
 
-**Решение: пользователь вводит руками сервер, логин, пароль и имя базы.**
+У числовых параметров обязательно значение по умолчанию **внутри** `get`:
+`int(os.getenv('TRANSLATION_BATCH'))` при отсутствующей переменной даст
+`TypeError` на импорте, потому что `int(None)` невозможен.
 
-Это сильнее, чем служебный аккаунт в конфиге: каждый ходит в БД под собой,
-значит права разграничиваются сами собой — человек видит ровно те таблицы,
-которые ему разрешены, и создаёт новые от своего имени. Но за это надо
-заплатить тремя вещами. Ни одну пропускать нельзя.
+Портов в конфиге нет: их вводит пользователь руками в форме. Разные контуры
+живут на разных портах, и дефолт в конфиге означал бы, что при переезде надо
+править файл на сервере вместо поля на экране.
 
-**Первое. Ручки подсказок обязаны быть POST, а не GET.**
+### 3.1. Реквизиты подключения: почему их негде хранить
 
-Это главное следствие, и именно оно ломает наивную схему. Строка запроса
-GET попадает в лог nginx, в лог werkzeug, в историю браузера, в заголовок
-`Referer` и в логи любого прокси по дороге. Пароль в query string — это
-пароль, записанный открытым текстом в пяти местах. Поэтому все ручки,
-которым нужны реквизиты, принимают JSON в теле POST-запроса.
+**Решение: реквизиты не хранятся на сервере вообще.** Пользователь вводит
+СУБД, хост, порт, пользователя, пароль и базу в форму, и они приходят в теле
+каждого POST-запроса. Повторно печатать их не надо — страница перерисовывается
+со всеми заполненными полями, то есть значения держит браузер, а не сервер.
 
-**Второе. Пароль нельзя класть в `flask.session`.**
+Это сознательный отказ от реестра подключений с `conn_id` и TTL. Такой реестр
+нужен ровно в одном случае: когда фоновое задание продолжает работать после
+того, как HTTP-запрос закончился, и ему нужны живые реквизиты. В v1 фоновых
+заданий нет (раздел 6), поэтому реестр был бы слоем, который ничего не решает.
 
-Сессия Flask — это cookie, которая **подписана, но не зашифрована**.
-Подпись защищает от подмены, а не от чтения: содержимое раскодируется
-base64 в одну строку. Всё, что попало в `session`, пользователь (и любой,
-кто добрался до cookie) может прочитать.
+Из отказа следуют три вещи, и каждую надо знать.
 
-**Третье. Пароль всё равно придётся держать на сервере.**
+**Первое. Форма обязана быть POST, а не GET.** Строка запроса GET попадает в
+лог nginx, в лог werkzeug, в историю браузера, в заголовок `Referer` и в логи
+любого прокси по дороге. Пароль в query string — это пароль, записанный
+открытым текстом в пяти местах.
 
-Фоновое задание работает минутами уже после того, как HTTP-запрос
-закончился, и ему нужно живое подключение. То есть выбор не между «хранить»
-и «не хранить», а между «хранить в одном месте» и «гонять по сети при каждом
-чихе». Первое лучше.
-
-Отсюда конструкция — **реестр подключений**, `app/db/registry.py`:
+**Второе. Пароль попадает в HTML ответа.** Чтобы на втором шаге («Выполнить
+перевод») не заставлять человека вводить реквизиты заново, поле пароля
+перерисовывается со значением:
 
 ```python
-import secrets
-import threading
-import time
-from dataclasses import dataclass
-
-
-@dataclass
-class ConnProfile:
-    engine: str           # 'clickhouse' | 'postgres'
-    host: str
-    user: str
-    password: str
-    database: str
-    created_at: float
-
-
-_conns: dict[str, ConnProfile] = {}
-_lock = threading.Lock()
-
-
-def put(profile: ConnProfile) -> str:
-    """Сохранить реквизиты и вернуть непредсказуемый идентификатор."""
-    conn_id = secrets.token_urlsafe(32)
-    with _lock:
-        _conns[conn_id] = profile
-    return conn_id
-
-
-def get(conn_id: str, ttl: int) -> ConnProfile:
-    with _lock:
-        profile = _conns.get(conn_id)
-    if profile is None or time.time() - profile.created_at > ttl:
-        raise KeyError("подключение не найдено или устарело")
-    return profile
-
-
-def drop(conn_id: str) -> None:
-    with _lock:
-        _conns.pop(conn_id, None)
+src_password = PasswordField(
+    'Пароль', validators=[Optional()], widget=PasswordInput(hide_value=False)
+)
 ```
 
-Как это работает целиком:
+По умолчанию `PasswordField` значение обратно не подставляет, и в обычном
+приложении отключать это не следует. Здесь это цена отказа от серверного
+хранения: пароль виден в исходном коде страницы и живёт в DOM до перехода на
+другую страницу. Поэтому страница отдаётся с `Cache-Control: no-store` — чтобы
+не осела в кэше браузера и прокси:
 
-1. Пользователь заполняет движок, сервер, логин, пароль, базу и жмёт
-   **«Подключиться»**.
-2. `POST /api/connect` с этими полями в теле. Сервер пробует соединиться.
-   Получилось — кладёт профиль в реестр и возвращает `conn_id`. Не
-   получилось — возвращает понятную ошибку, и это, кстати, единственный
-   момент, когда пользователь узнает, что опечатался в пароле.
-3. Браузер запоминает `conn_id` и дальше шлёт **только его**: пароль
-   пересекает сеть ровно один раз.
-4. Задание при создании забирает `conn_id` себе, чтобы фоновый поток мог
-   открыть соединение уже после ухода запроса.
+```python
+response.headers['Cache-Control'] = 'no-store'
+```
 
-`secrets.token_urlsafe(32)` — не `uuid4()`: идентификатор служит временным
-ключом к живым реквизитам, и он должен быть криптографически непредсказуем.
-
-**Ограничения, которые надо знать заранее:**
-
-- Реестр в памяти процесса, значит `gunicorn -w 1` — то же ограничение, что
-  у реестра заданий. При двух воркерах `conn_id`, выданный одним, будет
-  неизвестен другому.
-- Перезапуск приложения обнуляет реестр: все откроют форму заново. Для
-  внутреннего инструмента это приемлемо.
-- TTL обязателен (`CONN_TTL_SECONDS`), иначе пароли копятся в памяти до
-  перезапуска. Плюс `drop()` по кнопке «Отключиться».
-
-**И ещё: поднимите HTTPS**, если приложение доступно не только с localhost.
+**Третье. Поднимите HTTPS**, если приложение доступно не только с localhost.
 POST прячет пароль от логов, но не от того, кто слушает сеть.
 
 ---
@@ -292,9 +215,10 @@ ClickHouse и PostgreSQL устроены принципиально по-раз
 | протокол | HTTP, блоками колонок | своё соединение, построчно |
 | библиотека | `clickhouse-connect` | `psycopg` (версия 3) |
 | экранирование имён | обратные кавычки `` ` `` | `psycopg.sql.Identifier` |
-| метаданные | `system.databases`, `system.tables`, `system.columns` | `information_schema`, `pg_catalog` |
-| клонирование схемы | разбор `SHOW CREATE TABLE` | `CREATE TABLE (LIKE ... INCLUDING ALL)` |
-| подстановка значений | `JOIN` или `dictGet` | `LEFT JOIN` + `coalesce` |
+| описание результата | `query(...).column_names` | `cursor.description` |
+| потоковое чтение | блоками по сети | курсор с именем на сервере |
+| вставка пачкой | `client.insert` | `cursor.executemany` / `COPY` |
+| транзакции | нет | есть, и нам нужен режим read only |
 
 Единый класс, который делает вид, что это одно и то же, будет состоять из
 `if self.kind == "clickhouse"` и превратится в кашу. Правильный подход: узкий
@@ -308,236 +232,227 @@ from typing import Iterator, Protocol
 
 
 @dataclass(frozen=True)
-class TableRef:
-    """Ссылка на таблицу ВНУТРИ уже выбранной базы.
-
-    Базы здесь нет намеренно: она часть реквизитов подключения, её вводит
-    пользователь, и адаптер знает её с момента создания.
-
-    `schema` актуальна только для PostgreSQL (по умолчанию 'public'). Это не
-    придирка: в PostgreSQL подключаются К базе, а внутри адресуются
-    `схема.таблица`. Если сюда подставить имя базы, получится обращение к
-    схеме с таким именем — запрос не упадёт, просто ничего не найдёт.
-    В ClickHouse пространство имён — это и есть база, поэтому `schema = None`.
-    """
-    table: str
-    schema: str | None = None
+class ConnParams:
+    engine: str
+    host: str
+    port: int
+    user: str
+    password: str
+    database: str
 
 
 @dataclass(frozen=True)
 class Column:
     name: str
     type: str
-    is_virtual: bool      # MATERIALIZED/ALIAS в CH, генерируемые в PG — в них нельзя вставлять
-    translatable: bool    # строковый тип, который вообще имеет смысл переводить
+    translatable: bool
 
 
 class DbAdapter(Protocol):
-    """Контракт, который обязаны выполнять оба адаптера.
-
-    Метода list_databases() здесь нет: чтобы перечислить базы, надо уже быть
-    авторизованным, а базу пользователь называет сам вместе с реквизитами.
-    """
-
-    # --- чтение метаданных: питает подсказки в форме ---
     def probe(self) -> None: ...
-    def list_tables(self) -> list[str]: ...
-    def list_columns(self, ref: TableRef) -> list[Column]: ...
 
-    # --- чтение значений ---
-    def count_distinct(self, ref: TableRef, column: str) -> int: ...
-    def iter_distinct(self, ref: TableRef, column: str) -> Iterator[str]: ...
+    def query_columns(self, sql_text: str) -> list[Column]: ...
+    def count_distinct(self, sql_text: str, column: str) -> int: ...
+    def iter_distinct(self, sql_text: str, column: str) -> Iterator[str]: ...
 
-    # --- запись результата ---
-    def create_table_like(self, src: TableRef, dst: TableRef) -> None: ...
-    def upload_mapping(self, mapping_ref: TableRef,
-                       rows: list[tuple[str, str, str]]) -> None: ...
-    def apply_mapping(self, src: TableRef, dst: TableRef,
-                      mapping_ref: TableRef, columns: list[str]) -> None: ...
+    def ensure_dictionary(self, table: str) -> None: ...
+    def write_pairs(self, table: str, pairs: list[tuple[str, str]]) -> int: ...
 ```
 
-**Почему протокол именно такой гранулярности.** Это ключевой момент, его
-стоит понять.
+Методов `list_tables` и `list_columns` здесь нет, и это главное отличие от
+первой редакции документа. Источник данных — не таблица, а **произвольный
+запрос**: сплошь и рядом данные отдаёт хранимая процедура или функция, а не
+таблица, и перечислять таблицы в такой схеме бессмысленно. Колонки берутся из
+описания результата уже выполненного запроса.
 
-Слишком низкий уровень — `execute(sql: str)` — плохо: тогда SQL начнёт
-писаться в `core/`, и диалектные различия (обратные кавычки, `SHOW CREATE`,
-`dictGet`) протекут в бизнес-логику. Через месяц вы не сможете ответить на
-вопрос «где у нас формируется DDL».
-
-Слишком высокий уровень — `translate_table(...)` — тоже плохо: тогда вся
-логика (кэш, глоссарий, батчинг) уедет внутрь адаптера и продублируется
-дважды, для CH и для PG.
-
+**Почему протокол именно такой гранулярности.** Слишком низкий уровень —
+`execute(sql: str)` — плохо: тогда SQL начнёт писаться в `core/`, и диалектные
+различия протекут в бизнес-логику. Слишком высокий — `translate_query(...)` —
+тоже плохо: вся логика уедет внутрь адаптера и продублируется дважды.
 Правильный уровень — «операции над данными без знания, зачем они нужны».
-Адаптер умеет «дай уникальные значения» и «примени маппинг». Он не знает,
-что это перевод.
+Адаптер умеет «дай уникальные значения колонки этого запроса» и «запиши пары».
+Он не знает, что это перевод.
 
-`Protocol` из `typing` — это способ описать контракт без наследования: класс
-считается соответствующим, если у него есть нужные методы. Наследоваться от
-`DbAdapter` не обязательно, он нужен для проверки типов и как документация.
+`Protocol` из `typing` описывает контракт без наследования: класс считается
+соответствующим, если у него есть нужные методы.
 
 ### 4.3. `app/db/__init__.py` — фабрика
 
 ```python
-from .base import DbAdapter, TableRef, Column
+from .base import Column, ConnParams, DbAdapter
 from .clickhouse import ClickHouseAdapter
 from .postgres import PostgresAdapter
 
 
-def get_adapter(profile: ConnProfile, config) -> DbAdapter:
-    if profile.engine == "clickhouse":
-        return ClickHouseAdapter(host=profile.host, port=config.CH_PORT,
-                                 user=profile.user, password=profile.password,
-                                 database=profile.database)
-    if profile.engine == "postgres":
-        return PostgresAdapter(host=profile.host, port=config.PG_PORT,
-                               user=profile.user, password=profile.password,
-                               database=profile.database)
-    raise ValueError(f"неизвестный движок: {profile.engine}")
+def get_adapter(params: ConnParams) -> DbAdapter:
+    if params.engine == 'clickhouse':
+        return ClickHouseAdapter(params)
+    if params.engine == 'postgres':
+        return PostgresAdapter(params)
+    raise ValueError(f'неизвестный движок: {params.engine}')
 ```
 
 Одно место, где решается, какой адаптер создать. Весь остальной код работает
 с результатом и не знает, что именно ему досталось.
 
-### 4.4. `app/db/clickhouse.py` — на что обратить внимание
+### 4.4. Выполнение произвольного запроса: что можно и что нельзя
+
+Поле ввода запроса — самая удобная и самая опасная часть интерфейса. Четыре
+правила, без которых она станет источником аварий.
+
+**Первое. Запрос выполняется в режиме «только чтение».** В PostgreSQL это
+одна строка перед запросом:
+
+```sql
+SET TRANSACTION READ ONLY;
+```
+
+Опечатка вида `UPDATE` вместо `SELECT` в таком режиме не изменит данные, а
+вернёт ошибку. В ClickHouse аналог — настройка `readonly = 2` на запрос.
+
+**Второе. Один запрос за раз.** Драйверы умеют выполнять несколько
+операторов через точку с запятой. Отрезайте: разрешён ровно один оператор.
+
+**Третье. Для получения списка колонок результат материализовать не надо.**
+Нужны только имена, и они известны из описания курсора. В PostgreSQL —
+`cursor.description` после `execute` с `LIMIT 0`; в ClickHouse —
+`column_names` результата с `LIMIT 0`.
+
+**Четвёртое. Уникальные значения берутся обёрткой вокруг запроса пользователя.**
+
+```sql
+SELECT DISTINCT <колонка> FROM ( <запрос пользователя> ) AS src
+WHERE <колонка> IS NOT NULL
+```
+
+Это работает, если запрос можно поставить в подзапрос — то есть это `SELECT`,
+в том числе `SELECT * FROM моя_функция(...)`. Если источник — процедура,
+которую в подзапрос не поставить (`CALL`, `EXEC`), обёртка не сработает, и
+остаётся единственный путь: выполнить запрос как есть, вытащить строки и
+посчитать `distinct` в Python. Именно поэтому нужен предел
+`MAX_RU_DISTINCT_QTY` — у этого пути нет защиты со стороны СУБД.
+
+### 4.5. `app/db/clickhouse.py` — на что обратить внимание
 
 ```python
 import clickhouse_connect
 
-from .base import Column, TableRef
+from .base import Column
 
 
 def qi(name: str) -> str:
-    """Экранирование идентификатора для ClickHouse."""
-    return "`" + name.replace("`", "``") + "`"
+    return '`' + name.replace('`', '``') + '`'
 
 
 class ClickHouseAdapter:
-    def __init__(self, host, port, user, password, database):
-        self._database = database
+    def __init__(self, params):
         self._client = clickhouse_connect.get_client(
-            host=host, port=port, username=user, password=password,
-            database=database,
+            host=params.host, port=params.port, username=params.user,
+            password=params.password, database=params.database,
         )
 
-    def list_columns(self, ref: TableRef) -> list[Column]:
-        rows = self._client.query(
-            "SELECT name, type, default_kind FROM system.columns "
-            "WHERE database = {db:String} AND table = {tbl:String} ORDER BY position",
-            parameters={"db": self._database, "tbl": ref.table},
-        ).result_rows
+    def query_columns(self, sql_text):
+        result = self._client.query(f'SELECT * FROM ({sql_text}) AS src LIMIT 0')
         return [
-            Column(
-                name=name,
-                type=type_,
-                is_virtual=default_kind in ("MATERIALIZED", "ALIAS"),
-                translatable=("String" in type_ or "FixedString" in type_),
-            )
-            for name, type_, default_kind in rows
+            Column(name=name, type=type_, translatable='String' in type_)
+            for name, type_ in zip(result.column_names, result.column_types)
         ]
 ```
 
-Обратите внимание: значения подставляются через `parameters`, а не через
-f-строку. А вот **имена таблиц и колонок через параметры подставить нельзя** —
-они не значения, они часть синтаксиса. Для них `qi()`.
+Значения подставляются через `parameters`, а не через f-строку. А вот **имена
+таблиц и колонок через параметры подставить нельзя** — они не значения, они
+часть синтаксиса. Для них `qi()`.
 
-Четыре подводных камня ClickHouse, которые проявятся именно на этом проекте:
+Три подводных камня ClickHouse, которые проявятся именно здесь:
 
-1. **`CREATE TABLE new AS orig` копирует движок дословно.** Для
-   `ReplicatedMergeTree` это означает тот же путь в ZooKeeper — то есть две
-   таблицы будут писать в одну реплику. Берите `SHOW CREATE TABLE`, меняйте
-   имя **и** ZK-путь.
-2. **`MATERIALIZED` и `ALIAS` колонки нельзя вставлять.** Их надо исключить из
-   списка `INSERT`. Для этого в `Column` и заведён флаг `is_virtual`.
-3. **`Enum8`/`Enum16`: переведённое значение не влезет в тип** — значения
-   перечисления являются частью определения типа. Такие колонки в v1 просто
-   не предлагайте к переводу.
-4. **Промах `LEFT JOIN` в ClickHouse даёт значение по умолчанию для типа, а не
-   NULL.** Для `String` это пустая строка. То есть непереведённые значения
-   молча превратятся в `''`. Лечится либо типом `Nullable(String)` у колонки
-   `dst` в маппинг-таблице, либо настройкой `join_use_nulls = 1`. Это ровно
-   тот баг, который съедает день, если о нём не знать заранее.
+1. **Промах `LEFT JOIN` даёт значение по умолчанию для типа, а не NULL.** Для
+   `String` это пустая строка. Понадобится, когда будете применять словарь к
+   данным (раздел 4.7): непереведённые значения молча станут `''`. Лечится
+   типом `Nullable(String)` у колонки `dst` или настройкой
+   `join_use_nulls = 1`. Это ровно тот баг, который съедает день, если о нём
+   не знать заранее.
+2. **`Enum8`/`Enum16` переведённое значение не примут** — значения
+   перечисления являются частью определения типа. Такие колонки просто не
+   предлагайте к переводу.
+3. **Таблица-словарь должна быть с движком, допускающим перезапись.**
+   `ReplacingMergeTree ORDER BY src` даёт «последний перевод побеждает» после
+   слияния; на `MergeTree` повторный прогон накопит дубликаты.
 
-### 4.5. `app/db/postgres.py` — на что обратить внимание
+### 4.6. `app/db/postgres.py` — на что обратить внимание
 
 ```python
 import psycopg
 from psycopg import sql
 
-from .base import Column, TableRef
-
 
 class PostgresAdapter:
-    def __init__(self, host, port, user, password, database):
-        # Параметры словарём, а не строкой DSN: строка с password=... норовит
-        # попасть в текст исключения, а оттуда — в отчёт задания на экране.
-        self._params = dict(host=host, port=port, user=user,
-                            password=password, dbname=database)
+    def __init__(self, params):
+        self._params = dict(host=params.host, port=params.port, user=params.user,
+                            password=params.password, dbname=params.database)
 
-    def iter_distinct(self, ref: TableRef, column: str):
-        query = sql.SQL("SELECT DISTINCT {col} FROM {tbl} WHERE {col} IS NOT NULL").format(
-            col=sql.Identifier(column),
-            tbl=sql.Identifier(ref.schema or "public", ref.table),
-        )
+    def iter_distinct(self, sql_text, column):
+        query = sql.SQL(
+            'SELECT DISTINCT {col} FROM ({src}) AS src WHERE {col} IS NOT NULL'
+        ).format(col=sql.Identifier(column), src=sql.SQL(sql_text))
+
         with psycopg.connect(**self._params) as conn:
-            with conn.cursor(name="distinct_cur") as cur:   # name → курсор на сервере
+            conn.read_only = True
+            with conn.cursor(name='distinct_cur') as cur:
                 cur.itersize = 10_000
                 cur.execute(query)
                 for (value,) in cur:
                     yield value
 ```
 
-Здесь два приёма, ради которых мы и выбрали psycopg 3:
+Четыре приёма, ради которых мы и выбрали psycopg 3:
 
-- **`sql.Identifier`** экранирует имена правильно и с учётом кавычек.
-  Это и есть настоящая защита от инъекции — не регулярка на входе формы.
-  Регулярка полезна как дополнительная проверка, но не как граница
-  безопасности.
+- **Параметры словарём, а не строкой DSN.** Строка с `password=...` норовит
+  попасть в текст исключения, а оттуда — на экран пользователю.
+- **`sql.Identifier`** экранирует имена правильно и с учётом кавычек. Это и
+  есть настоящая защита от инъекции — не регулярка на входе формы. Регулярка
+  полезна как ранняя отбраковка, но не как граница безопасности.
 - **`cursor(name=...)`** создаёт курсор на стороне сервера. Без имени psycopg
-  втянет весь результат в память; на таблице с миллионом distinct это убьёт
+  втянет весь результат в память; на запросе с миллионом строк это убьёт
   процесс.
+- **`conn.read_only = True`** — тот самый режим из 4.4, выставленный на
+  соединение целиком.
 
-Клонирование схемы в PostgreSQL проще, чем в ClickHouse:
-
-```sql
-CREATE TABLE new_t (LIKE orig_t INCLUDING ALL);
-```
-
-`INCLUDING ALL` переносит типы, значения по умолчанию, индексы, ограничения
-CHECK, identity-колонки и комментарии. **Не переносит внешние ключи и
-триггеры** — если они нужны, это отдельный шаг.
-
-### 4.6. Как применяется маппинг
-
-Главное правило: **строки не должны проходить через Python.** Вы заливаете
-маленькую таблицу соответствий и делаете перенос одним запросом внутри СУБД.
-
-Маппинг-таблица одна на все колонки, с колонкой-дискриминатором:
-
-```
-mapping(col_name String, src String, dst Nullable(String))
-```
-
-PostgreSQL, перевод двух колонок `a` и `c`:
+Таблица-словарь создаётся так:
 
 ```sql
-INSERT INTO new_t (a, b, c)
-SELECT
-    coalesce(m_a.dst, t.a),
-    t.b,
-    coalesce(m_c.dst, t.c)
+CREATE TABLE IF NOT EXISTS <целевая> (
+    src text PRIMARY KEY,
+    dst text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+Запись — через `INSERT ... ON CONFLICT (src) DO UPDATE`, чтобы повторный
+прогон обновлял перевод, а не падал на уникальном ключе. Имя целевой таблицы
+пользователь может указать как `схема.таблица` — адаптер разбирает это на две
+части и отдаёт в `sql.Identifier(schema, table)`.
+
+### 4.7. Как потом применить словарь к данным
+
+v1 на этом заканчивается: она производит **таблицу соответствий**, а не копию
+исходных данных с переводом. Это осознанно — словарь переиспользуется между
+таблицами и проверяется человеком, а копия данных нужна не всегда.
+
+Когда копия всё-таки понадобится, главное правило: **строки не должны
+проходить через Python.** Словарь уже лежит в БД, значит перенос делается
+одним запросом внутри СУБД:
+
+```sql
+INSERT INTO new_t (a, b)
+SELECT coalesce(m.dst, t.a), t.b
 FROM orig_t t
-LEFT JOIN mapping m_a ON m_a.col_name = 'a' AND m_a.src = t.a
-LEFT JOIN mapping m_c ON m_c.col_name = 'c' AND m_c.src = t.c;
+LEFT JOIN dictionary m ON m.src = t.a;
 ```
 
 `coalesce(m.dst, t.a)` означает «если перевода нет — оставь оригинал». Это
-важно не только для пропусков: между моментом, когда вы собрали distinct, и
-моментом вставки в таблицу могли появиться новые значения. Без `coalesce` они
-станут NULL.
-
-ClickHouse — то же самое, но помните про пункт 4 выше: либо `Nullable(String)`,
-либо `SETTINGS join_use_nulls = 1`.
+важно не только для пропусков: между моментом сбора уникальных значений и
+моментом вставки могли появиться новые. Без `coalesce` они станут NULL. В
+ClickHouse здесь же вспоминайте пункт 1 из 4.5.
 
 ---
 
@@ -547,80 +462,127 @@ ClickHouse — то же самое, но помните про пункт 4 в�
 
 ### `core/prefilter.py`
 
-Решает, надо ли вообще отправлять значение в модель. Это самая
+Решает, надо ли вообще отправлять значение в движок. Это самая
 высокоокупаемая часть проекта: она и ускоряет прогон в разы, и убирает
 галлюцинации на нетекстовом входе.
 
 ```python
 import re
 
-CYRILLIC = re.compile(r"[а-яёА-ЯЁ]")
+CYRILLIC = re.compile(r'[а-яёА-ЯЁ]')
 
 
-def needs_translation(value: str | None) -> bool:
+def needs_translation(value):
     if value is None:
         return False
     if not value.strip():
         return False
-    if not CYRILLIC.search(value):     # уже латиница, код, число — не трогаем
+    if not CYRILLIC.search(value):
         return False
     return True
 
 
-def normalize_key(value: str) -> str:
-    """Ключ для кэша и глоссария: схлопывает варианты записи одного и того же."""
-    v = value.replace(" ", " ")     # неразрывный пробел
-    v = v.replace("ё", "е").replace("Ё", "Е")
-    v = re.sub(r"\s+", " ", v).strip()
+def normalize_key(value):
+    v = value.replace(' ', ' ')
+    v = v.replace('ё', 'е').replace('Ё', 'Е')
+    v = re.sub(r'\s+', ' ', v).strip()
     return v.casefold()
 ```
 
-Про `normalize_key`: `«Ключ»`, `«ключ »` и `«ключ»` с неразрывным пробелом —
-это три разных distinct-значения, которые должны перевестись одинаково.
-Нормализуем **ключ**, но в БД пишем и возвращаем **оригинал**.
+Про `normalize_key`: «Ключ», «ключ » и «ключ» с неразрывным пробелом — это три
+разных distinct-значения, которые должны перевестись одинаково. Нормализуем
+**ключ**, но в движок отправляем и в базу пишем **оригинал**. Это легко
+перепутать, и тогда модель получит строку в нижнем регистре и потеряет
+признак, что слово в кавычках — название.
+
+### `core/protect.py`
+
+Отвечает на вопрос «что внутри строки переводить нельзя». Самый окупаемый
+модуль после `prefilter`, и единственный, который работает без всякой модели.
+
+Перед отправкой в движок из строки вырезаются закавыченные названия,
+латиница, числа, артикулы и термины из списка «не переводить». На их место
+ставятся метки, строка переводится, метки заменяются обратно:
+
+```
+ООО "Ромашка"  →  ООО __K1__  →  LLC __K1__  →  LLC "Ромашка"
+```
+
+Без этого вы получите `LLC "Chamomile"`, и в выгрузке этого никто не заметит.
+
+Две детали, без которых модуль не работает. Метка должна быть в форме,
+которую токенизатор движка не разрывает — подбирается опытно, и подбирать
+придётся. И нужна проверка обратной подстановки: если после перевода не все
+метки на месте, значение откатывается на оригинал, а не отдаётся битым.
 
 ### `core/glossary.py`
 
-Точные соответствия, которые применяются **до** модели. NMT-движок не умеет
-принимать глоссарий, поэтому это единственный способ зафиксировать
-терминологию.
+Терминология. Важно понять сразу: это **не один словарь, а три механизма в
+трёх точках пайплайна**, и попытка уместить их в один `dict` — главная
+причина, по которой глоссарий кажется бессмысленным.
 
-```python
-GLOSSARY = {
-    "ооо": "LLC",
-    "ао": "JSC",
-    "инн": "TIN",
-    "оквэд": "OKVED",
-}
+1. **Список «не переводить»** — работает до движка, внутри `protect.py`.
+2. **Подстановка целого значения** — вместо движка, когда значение целиком
+   равно известному коду: `ООО → LLC`, `ИНН → TIN`.
+3. **Пост-правка терминов** — после движка, замена по границам слов, когда
+   движок выбрал синоним вместо принятого у вас термина.
 
+Механизм 2 — тот, что был в первой редакции документа. Сам по себе он
+закрывает только значения-коды: на `Договор поставки оборудования` точное
+совпадение не сработает никогда, а это основная масса данных. Поэтому нужны
+все три.
 
-def lookup(normalized_key: str) -> str | None:
-    return GLOSSARY.get(normalized_key)
+Какой набор терминов загружать, определяет **домен**, а домен — свойство
+колонки, не значения. Колонка `contract_kind` юридическая целиком, `oborot_nds`
+финансовая целиком. Поэтому домен выбирается один раз на прогон, а не
+угадывается на каждой строке.
+
+Формат — файлы по домену, не `dict` в коде: править терминологию не повод
+делать коммит в `.py`.
+
+```yaml
+- src: счёт
+  dst: account
+  kind: term
+  note: план счетов; «счёт на оплату» — invoice
+- src: ООО
+  dst: LLC
+  kind: whole
+- src: Ромашка
+  kind: keep
 ```
 
-В v1 — словарь в коде. Позже — таблица в БД с веб-редактором.
+И главное про глоссарий: **он результат работы системы, а не вход**. Писать
+его заранее бессмысленно — заранее неизвестно, что встретится. Он набирается
+из правок, которые человек делает в третьем блоке интерфейса.
 
 ### `core/cache.py`
 
 Накопленный словарь переводов. **Это не оптимизация, а то, что обеспечивает
-консистентность:** без него одно и то же значение в двух таблицах
-переведётся по-разному, и никто этого не заметит.
-
-Одна таблица:
+консистентность:** без него одно и то же значение в двух таблицах переведётся
+по-разному, и никто этого не заметит.
 
 ```sql
 CREATE TABLE translation_cache (
-    key_hash    text PRIMARY KEY,   -- хэш от (normalized_key, engine, model_version)
-    src         text NOT NULL,      -- оригинал как есть
+    key_hash    text PRIMARY KEY,
+    src         text NOT NULL,
     dst         text NOT NULL,
-    engine      text NOT NULL,      -- 'libretranslate'
+    engine      text NOT NULL,
     model_ver   text NOT NULL,
+    domain      text NOT NULL,
+    glossary_ver text NOT NULL,
+    reviewed    boolean NOT NULL DEFAULT false,
     created_at  timestamptz DEFAULT now()
 );
 ```
 
-Версия модели в ключе обязательна: после обновления Argos переводы поедут, и
-вы должны уметь отличить старые от новых, а не получить смесь.
+`key_hash` считается от `(normalize_key(src), engine, model_ver, domain,
+glossary_ver)`. Домен в ключе обязателен: «счёт» в финансовой и в юридической
+колонке обязаны переводиться по-разному. Внутри одного домена консистентность
+при этом сохраняется — а именно она и нужна.
+
+`reviewed` отмечает переводы, подтверждённые человеком в третьем блоке. Такие
+при следующем прогоне в движок не отправляются никогда.
 
 ### `core/translate_client.py`
 
@@ -630,40 +592,43 @@ import requests
 
 class LibreTranslateClient:
     def __init__(self, url, batch_size=24, timeout=60):
-        self._url = url.rstrip("/") + "/translate"
+        self._url = url.rstrip('/') + '/translate'
         self._batch = batch_size
         self._timeout = timeout
 
-    def translate(self, texts: list[str]) -> list[str]:
+    def translate(self, texts, ctx=None):
         out = []
         for i in range(0, len(texts), self._batch):
             chunk = texts[i:i + self._batch]
             resp = requests.post(
                 self._url,
-                json={"q": chunk, "source": "ru", "target": "en", "format": "text"},
+                json={'q': chunk, 'source': 'ru', 'target': 'en', 'format': 'text'},
                 timeout=self._timeout,
             )
             resp.raise_for_status()
-            result = resp.json()["translatedText"]
+            result = resp.json()['translatedText']
             if len(result) != len(chunk):
-                raise RuntimeError(f"движок вернул {len(result)} вместо {len(chunk)}")
+                raise RuntimeError(f'движок вернул {len(result)} вместо {len(chunk)}')
             out.extend(result)
         return out
 ```
 
-Три обязательных детали:
+Четыре обязательные детали:
 
 - **`q` — массив.** LibreTranslate поддерживает батчи, и это главное, что
   спасает от «запрос на каждую строку». Размер батча подберите под
   `--batch-limit` вашего инстанса.
-- **`source: "ru"` строго, никогда `auto`.** Автоопределение языка на коротких
+- **`source: 'ru'` строго, никогда `auto`.** Автоопределение языка на коротких
   метках ошибается и переводит с неверного языка молча, без ошибки.
 - **Проверка длины ответа.** Если движок вернул меньше элементов, чем приняли,
   дальше всё поедет со сдвигом. Падать надо здесь, а не через три таблицы.
+- **Аргумент `ctx`** NMT-движок игнорирует: принимать контекст он не умеет.
+  Он есть в подписи, потому что это единственное место, которое придётся
+  менять, если движок когда-нибудь сменится на такой, который умеет. Контекст
+  — это домен и метаданные колонки.
 
-Интерфейс из одного метода `translate(list) -> list` — это то, что делает
-движок сменным. Захотите уйти на opus-mt-tc-big или на локальную LLM — новый
-класс с тем же методом, остальной код не меняется.
+Интерфейс из одного метода делает движок сменным: новый класс с тем же
+методом, остальной код не меняется.
 
 ### `core/pipeline.py`
 
@@ -671,469 +636,344 @@ class LibreTranslateClient:
 консоли, из теста.
 
 ```python
-def run(adapter, translator, cache, src: TableRef, dst: TableRef,
-        columns: list[str], progress=None, cancelled=None) -> Report:
+def run(adapter, translator, cache, sql_text, column, domain) -> list[tuple[str, str]]:
     ...
 ```
-
-`progress` — функция обратного вызова, которую пайплайн дёргает по мере
-работы. `cancelled` — функция, возвращающая `True`, если задание попросили
-отменить. Так пайплайн ничего не знает ни о реестре заданий, ни о HTTP, но
-умеет сообщать о прогрессе и останавливаться.
 
 Порядок шагов:
 
 ```
-1. Проверить, что таблица и колонки реально существуют
-2. Для каждой колонки: count_distinct → если больше MAX_DISTINCT, отказ
-3. iter_distinct → набрать значения
-4. Разложить каждое значение по четырём корзинам:
-      не требует перевода (prefilter)  → оригинал
-      попало в глоссарий               → из глоссария
-      есть в кэше                      → из кэша
-      остальное                        → в очередь на перевод
-5. Очередь → батчами в translator
-6. Новые переводы записать в кэш
-7. Собрать маппинг → upload_mapping
-8. create_table_like → apply_mapping
-9. Вернуть Report: сколько переведено, взято из кэша, пропущено, ошибок
+1. count_distinct → если больше MAX_RU_DISTINCT_QTY, отказ с понятным текстом
+2. iter_distinct → набрать значения
+3. Разложить каждое значение по корзинам:
+      не требует перевода (prefilter)   → оригинал
+      подтверждено человеком (reviewed) → из кэша, минуя движок
+      попало в глоссарий целиком        → из глоссария
+      есть в кэше                       → из кэша
+      остальное                         → в очередь
+4. Очередь: protect → движок батчами → обратная подстановка → пост-правка
+5. Новые переводы записать в кэш с reviewed = false
+6. Вернуть пары «значение — перевод» для показа в третьем блоке
 ```
 
-Шаг 4 — то, ради чего стоит весь этот слой: на реальных данных в модель уйдёт
+Шаг 3 — то, ради чего стоит весь этот слой: на реальных данных в движок уйдёт
 меньшая часть значений, остальное закроется фильтром, глоссарием и кэшем.
 
+Запись в целевую таблицу в пайплайн **не входит**: между переводом и записью
+стоит человек. Это отдельный вызов `write_pairs` после нажатия «Применить», и
+там же правки уходят в кэш с `reviewed = true`.
+
 ---
 
-## 6. Слой `jobs`: почему нельзя просто в обработчике запроса
+## 6. Почему в v1 нет слоя `jobs`
 
-Перевод десяти тысяч значений — это минуты. HTTP-запрос столько не живёт:
+Перевод десяти тысяч значений — это минуты, а HTTP-запрос столько не живёт:
 gunicorn по умолчанию рвёт соединение через 30 секунд, браузер — раньше.
-Поэтому обработчик формы должен **создать задание и сразу вернуть ответ**, а
-работа идёт в отдельном потоке.
+Классическое решение — фоновый поток, реестр заданий в памяти и опрос
+прогресса из браузера.
 
-### `app/jobs/registry.py`
+В v1 этого нет, и держится это на одном предположении: **`MAX_RU_DISTINCT_QTY`
+ограничивает объём так, что перевод успевает за время запроса.** Пока
+уникальных значений в колонке единицы тысяч, а не сотни, синхронного
+обработчика достаточно, и он экономит вам реестр заданий, поток, опрос,
+JavaScript и отмену.
 
-```python
-import threading
-import uuid
-from dataclasses import dataclass, field
+Это предположение перестанет быть верным, и признак будет однозначный: таймаут
+вместо третьего блока. Тогда понадобится `app/jobs/registry.py` — словарь
+заданий, `threading.Thread`, прогресс и отмена, плюс опрос из браузера. Менять
+при этом придётся только обработчик: пайплайн умеет принимать `progress` и
+`cancelled` и ничего не знает о том, кто его вызвал.
 
-
-@dataclass
-class Job:
-    id: str
-    status: str = "pending"        # pending | running | done | error | cancelled
-    total: int = 0
-    done: int = 0
-    message: str = ""
-    report: dict | None = None
-    _cancel: threading.Event = field(default_factory=threading.Event)
-
-
-_jobs: dict[str, Job] = {}
-_lock = threading.Lock()
-
-
-def submit(fn, *args, **kwargs) -> str:
-    job = Job(id=uuid.uuid4().hex)
-    with _lock:
-        _jobs[job.id] = job
-
-    def runner():
-        job.status = "running"
-        try:
-            job.report = fn(*args, progress=_make_progress(job),
-                            cancelled=job._cancel.is_set, **kwargs)
-            job.status = "cancelled" if job._cancel.is_set() else "done"
-        except Exception as exc:
-            job.status = "error"
-            job.message = str(exc)
-
-    threading.Thread(target=runner, daemon=True).start()
-    return job.id
-```
-
-**Осознанное упрощение v1: реестр живёт в памяти процесса.** Это значит, что
-приложение обязано запускаться в **один воркер** (`gunicorn -w 1`). С двумя
-воркерами запрос о прогрессе попадёт в процесс, который про это задание не
-знает, и вы получите 404 на ровном месте.
-
-Путь наверх, когда упрётесь: таблица `jobs` в PostgreSQL вместо словаря.
-Менять придётся только этот файл — потому что пайплайн ничего про реестр не
-знает.
+Заранее поднимать `gunicorn -w 1` и держать реестр в памяти процесса ради
+этого не надо.
 
 ---
 
-## 7. Слой `views` и `forms`: ручной ввод плюс выпадающий список
+## 7. Слой `routes` и `forms`: три блока одной формой
 
-Вот здесь ваше требование. Разберу подробно, потому что тут есть ровно одна
-правильная конструкция и одна распространённая ошибка.
+### 7.1. Одна форма, три кнопки
 
-### 7.1. Почему не `SelectField`
+Страница — три прямоугольника и кнопка под ними:
 
-Рефлекс «выпадающий список → `SelectField`» здесь не работает. `SelectField`:
-
-- требует, чтобы `choices` были известны в момент отрисовки страницы — а у вас
-  список баз становится известен только после того, как пользователь ввёл
-  сервер;
-- **проверяет значение по списку и отвергает всё остальное** — то есть
-  запрещает ручной ввод, который вы хотите.
-
-### 7.2. Правильная конструкция: `StringField` + `<datalist>`
-
-`<datalist>` — это штатный HTML-элемент: поле остаётся обычным текстовым
-вводом, но браузер показывает подсказки из списка. Ровно «печатаю руками, но
-могу и выбрать».
-
-```html
-<input list="dl-table" name="table" id="table" autocomplete="off">
-<datalist id="dl-table"></datalist>
+```
+┌─ 1. База с переводимыми значениями ─────────────────────┐
+│ СУБД  хост  порт  пользователь  пароль  база            │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ SELECT ... (запрос или вызов процедуры)             │ │
+│ └─────────────────────────────────────────────────────┘ │
+│ [Выполнить]   Колонка: [ v ]                            │
+└─────────────────────────────────────────────────────────┘
+┌─ 2. База для переведённых значений ─────────────────────┐
+│ СУБД  хост  порт  пользователь  пароль  база            │
+│ Целевая таблица: [            ]                         │
+│ [Выполнить перевод]                                     │
+└─────────────────────────────────────────────────────────┘
+┌─ 3. Значение и перевод ─────────────────────────────────┐
+│ Договор поставки      │ [Supply contract            ]   │
+│ ООО "Ромашка"         │ [LLC "Ромашка"              ]   │
+└─────────────────────────────────────────────────────────┘
+                                            [Применить]
 ```
 
-Подсказки нужны там, где список можно получить, уже зная реквизиты:
-**таблицы и колонки**. Сервер, логин, пароль и база — обычные поля без
-`<datalist>`, их узнать заранее неоткуда.
+Ключевое решение: **все три блока лежат внутри одного `<form>`**, а кнопок
+три. Так при нажатии любой из них на сервер уходят все поля сразу — и
+реквизиты источника, и реквизиты приёмника, и правки переводов. Серверу
+нечего запоминать между шагами, и это то, что позволило выбросить реестр
+подключений из раздела 3.1.
 
-Со стороны WTForms это просто `StringField`. Атрибут `list` передаётся при
-отрисовке: **любые незнакомые именованные аргументы WTForms превращает в
-HTML-атрибуты.** Это тот механизм, который здесь нужен:
+Какая кнопка нажата, WTForms сообщает сам: `SubmitField` приходит в данных
+только та, которой нажали, поэтому в обработчике достаточно проверить
+`form.run_query.data`.
 
-```jinja
-{{ form.table(list="dl-table", autocomplete="off", class="input") }}
-```
+Следствие, которое надо принять: **валидаторы `DataRequired` на полях не
+годятся**. При нажатии «Выполнить» поля второго блока ещё пусты, и форма с
+`DataRequired` не прошла бы валидацию целиком. Поэтому все поля
+необязательные, а нужные для конкретного действия проверяются в обработчике.
 
-`autocomplete="off"` нужен, чтобы браузер не подмешивал к вашим подсказкам
-свою историю ввода.
+### 7.2. Почему здесь `SelectField` уместен
+
+В первой редакции документа был аргумент против `SelectField` в пользу
+`StringField` плюс `<datalist>`: `SelectField` требует, чтобы `choices` были
+известны в момент отрисовки, и отвергает значения вне списка.
+
+В новой схеме оба возражения снимаются. Список колонок известен в момент
+отрисовки — он получен из описания результата уже выполненного запроса. А
+ручной ввод имени колонки больше не нужен: колонок у результата ровно столько,
+сколько есть, и выбирать надо из них.
+
+Одна тонкость всё же остаётся: список колонок приходит в браузер и возвращается
+обратно следующим запросом, поэтому на момент валидации `choices` нужно
+восстановить. Делается это скрытым полем со списком колонок и
+`validate_choice=False` у поля выбора — проверять значение по списку, который
+сам пришёл из браузера, смысла нет, а имя колонки всё равно уйдёт в
+`sql.Identifier`.
 
 ### 7.3. `app/forms.py`
 
 ```python
-from flask_wtf import FlaskForm
-from wtforms import (FieldList, PasswordField, SelectField, StringField,
-                     SubmitField)
-from wtforms.validators import DataRequired, Length, Regexp
-
-IDENT = Regexp(r"^[^\x00\n\r`\"]+$", message="недопустимые символы в имени")
-
-
-class TranslateForm(FlaskForm):
-    # Здесь SelectField уместен: движков ровно два, они известны заранее
-    engine = SelectField("СУБД", choices=[
-        ("clickhouse", "ClickHouse"),
-        ("postgres", "PostgreSQL"),
-    ])
-
-    # --- реквизиты: только ручной ввод, подсказок взять неоткуда ---
-    server = StringField("Сервер", validators=[DataRequired(), Length(max=255)])
-    user = StringField("Пользователь", validators=[DataRequired(), Length(max=128)])
-    password = PasswordField("Пароль",
-                             render_kw={"autocomplete": "new-password"})
-    database = StringField("База данных", validators=[DataRequired(), IDENT])
-
-    # --- а вот здесь список уже можно получить: ручной ввод + <datalist> ---
-    table = StringField("Таблица", validators=[DataRequired(), IDENT])
-
-    # Несколько колонок: FieldList даёт columns-0, columns-1, ...
-    columns = FieldList(StringField("Колонка", validators=[IDENT]), min_entries=1)
-
-    target_table = StringField("Новая таблица", validators=[DataRequired(), IDENT])
-
-    submit = SubmitField("Перевести")
+class TranslationForm(FlaskForm):
+    src_engine = SelectField('СУБД', choices=ENGINES)
+    src_host = StringField('Хост', validators=[Optional()])
+    src_port = StringField('Порт', validators=[Optional()])
+    src_user = StringField('Пользователь', validators=[Optional()])
+    src_password = PasswordField('Пароль', validators=[Optional()],
+                                 widget=PasswordInput(hide_value=False))
+    src_database = StringField('База данных', validators=[Optional()])
+    src_query = TextAreaField('Запрос', validators=[Optional()])
+    src_columns = HiddenField()
+    src_column = SelectField('Колонка', choices=[], validate_choice=False)
+    run_query = SubmitField('Выполнить')
+    ...
+    apply_result = SubmitField('Применить')
 ```
 
-Два момента про `PasswordField`. Он рисует `<input type="password">`, то есть
-браузер прячет ввод. И у него по умолчанию `hide_value=True`: если форма не
-прошла валидацию и страница перерисовывается, пароль **не** подставляется
-обратно в HTML. Это поведение нужное, не отключайте его ради удобства.
+Поля «База данных» нет в исходном перечне требований, но без него нельзя:
+`dbname` обязателен для подключения к PostgreSQL, межбазовых запросов там нет.
+`СУБД` нужна по той же причине — без неё не выбрать адаптер, а порт движок не
+определяет.
 
-`autocomplete="new-password"` — практичнее, чем `"off"`: современные браузеры
-`off` на полях пароля часто игнорируют, а `new-password` уважают.
-
-`FieldList` — это список однотипных полей. WTForms сам разберёт пришедшие
-`columns-0`, `columns-1` и так далее; JS добавляет новые строки по кнопке.
-
-**Про валидацию.** Форма проверяет только форму: заполнено, не слишком длинно,
-нет управляющих символов. Проверить, что колонка реально существует, форма не
-может — для этого нужно соединение с БД. Поэтому проверка в два этапа:
+### 7.4. `app/routes.py`
 
 ```python
-if form.validate_on_submit():               # 1. форма корректна по виду
-    errors = validate_against_db(form, adapter)   # 2. объекты реально есть
-    if errors:
-        ...
-```
-
-Регулярка `IDENT` — **не граница безопасности**. Настоящая защита от инъекции
-— `sql.Identifier` и `qi()` в адаптерах. Регулярка просто отсекает
-бессмысленный ввод пораньше.
-
-### 7.4. `app/views/main.py`
-
-```python
-from flask import Blueprint, current_app, render_template
-
-from ..forms import TranslateForm
-
-bp = Blueprint("main", __name__)
-
-
-@bp.route("/", methods=["GET", "POST"])
-@bp.route("/index", methods=["GET", "POST"])
+@bp.route('/', methods=['GET', 'POST'])
+@bp.route('/index', methods=['GET', 'POST'])
 def index():
-    form = TranslateForm()
+    form = TranslationForm()
+    stored = [line for line in (form.src_columns.data or '').splitlines() if line]
+    form.src_column.choices = [(name, name) for name in stored]
+    pairs = list(zip(request.form.getlist('source'), request.form.getlist('translation')))
+    notice = None
+
     if form.validate_on_submit():
-        ...     # проверить по БД, создать задание, отдать job_id
-    return render_template("index.html", form=form)
+        if form.run_query.data:
+            ...
+        elif form.run_translate.data:
+            ...
+        elif form.apply_result.data:
+            ...
+
+    response = make_response(render_template('index.html', form=form, pairs=pairs, notice=notice))
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 ```
 
-### 7.5. `app/views/api.py` — ручки для подсказок
+Пары «значение — перевод» собираются из `request.form.getlist`, а не через
+WTForms: их количество заранее неизвестно, и `FieldList` здесь только добавил
+бы конструкций. В шаблоне каждая строка третьего блока — это скрытое поле с
+оригиналом и текстовое поле с переводом, оба с одинаковыми именами, поэтому
+`getlist` возвращает два параллельных списка, которые остаётся сшить `zip`.
 
-Списки зависят от того, что уже введено, поэтому их нельзя отдать вместе со
-страницей. Нужны JSON-ручки — и все они **POST**, потому что в теле ходят
-реквизиты либо ключ к ним (см. 3.1):
+Три функции — `fetch_result_columns`, `build_translations`, `write_to_target` —
+это стыки со слоями `db` и `core`. Пока те слои не написаны, функции поднимают
+`NotImplementedError`, обработчик ловит её и показывает текст в блоке
+сообщений. Страница при этом работает целиком, и видно, где именно работа ещё
+не сделана.
 
-```
-POST /api/connect    {engine, server, user, password, database}  -> {conn_id}
-POST /api/tables     {conn_id}                                   -> [имена]
-POST /api/columns    {conn_id, table}                            -> [{name,type,...}]
-POST /api/disconnect {conn_id}
-```
-
-`GET` здесь был бы ошибкой: параметры строки запроса попадают в логи и в
-историю браузера.
-
-```python
-@bp.post("/connect")
-def connect():
-    data = request.get_json()
-    profile = ConnProfile(
-        engine=data["engine"], host=data["server"], user=data["user"],
-        password=data["password"], database=data["database"],
-        created_at=time.time(),
-    )
-    adapter = get_adapter(profile, current_app.config)
-    try:
-        adapter.probe()
-    except Exception as exc:
-        return jsonify({"error": safe_message(exc)}), 400
-    return jsonify({"conn_id": registry.put(profile)})
-
-
-@bp.post("/columns")
-def columns():
-    data = request.get_json()
-    profile = registry.get(data["conn_id"], current_app.config.CONN_TTL_SECONDS)
-    adapter = get_adapter(profile, current_app.config)
-    cols = adapter.list_columns(TableRef(table=data["table"]))
-    return jsonify([
-        {"name": c.name, "type": c.type, "translatable": c.translatable}
-        for c in cols if not c.is_virtual
-    ])
-```
-
-`safe_message(exc)` — маленькая функция, которая вырезает из текста
-исключения возможные реквизиты. Драйверы любят включать в сообщение об
-ошибке параметры подключения, и это сообщение вы собираетесь показать на
-экране.
-
-`/api/columns` отдаёт и тип, и признак `translatable` — чтобы в интерфейсе
-можно было показать, что переводить эту колонку бессмысленно (число, дата), и
-отфильтровать виртуальные колонки, в которые всё равно нельзя вставить.
+**Про валидацию.** Форма проверяет только форму: заполнено, не слишком длинно.
+Что колонка существует и что запрос корректен, форма знать не может — это
+выясняется при выполнении запроса. Настоящая защита от инъекции при этом не в
+форме и не в регулярках, а в `sql.Identifier` и `qi()` внутри адаптеров.
 
 ---
 
-## 8. `static/js/index.js` — каскад подсказок
+## 8. Что осталось без JavaScript
 
-Логика простая: как пользователь закончил вводить поле, подтягиваем список
-для следующего.
+Ни строчки, и это решение, а не недоделка.
 
-```javascript
-let connId = null;
+В первой редакции документа был каскад подсказок на `fetch`: подключиться,
+подтянуть список баз, по нему — список таблиц, по нему — колонки. Каскад нужен
+был потому, что источником был объект БД, который надо найти среди других.
+Источник стал запросом, который пользователь пишет сам, и искать больше
+нечего: единственный список, который нужен, — колонки результата, и они
+приходят вместе с перерисованной страницей.
 
-async function post(url, body) {
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(body),
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || resp.statusText);
-  return data;
-}
+Что мы получили, отказавшись от JS:
 
-function fillDatalist(listId, items) {
-  const dl = document.getElementById(listId);
-  dl.innerHTML = "";
-  for (const item of items) {
-    const opt = document.createElement("option");
-    opt.value = (typeof item === "string") ? item : item.name;
-    dl.appendChild(opt);
-  }
-}
+- нет `/api/*` ручек, а значит нет и второго места, где надо аккуратно
+  обращаться с реквизитами;
+- нет рассинхронизации между состоянием в DOM и состоянием на сервере;
+- состояние страницы — это сама форма, и его целиком держит браузер.
 
-// Шаг 1: пароль уходит по сети ровно здесь и больше нигде
-document.getElementById("btn-connect").addEventListener("click", async () => {
-  try {
-    const data = await post("/api/connect", {
-      engine:   document.getElementById("engine").value,
-      server:   document.getElementById("server").value,
-      user:     document.getElementById("user").value,
-      password: document.getElementById("password").value,
-      database: document.getElementById("database").value,
-    });
-    connId = data.conn_id;
-    document.getElementById("password").value = "";   // из DOM он больше не нужен
-    fillDatalist("dl-table", (await post("/api/tables", {conn_id: connId})));
-    showOk("Подключено");
-  } catch (e) {
-    showError(e.message);
-  }
-});
+Что потеряли: каждое действие перезагружает страницу. Для внутреннего
+инструмента на три кнопки это приемлемо.
 
-// Шаг 2: колонки — когда названа таблица
-document.getElementById("table").addEventListener("change", async (ev) => {
-  if (!connId) { showError("Сначала подключитесь"); return; }
-  try {
-    const cols = await post("/api/columns", {conn_id: connId, table: ev.target.value});
-    fillDatalist("dl-columns", cols.filter(c => c.translatable));
-  } catch (e) {
-    showError(e.message);
-  }
-});
-```
-
-Три вещи, которые здесь сделаны намеренно:
-
-- **Кнопка «Подключиться» — обязательный элемент, а не удобство.** Она
-  единственное место, где человек узнает, что ошибся в пароле или адресе.
-- **Поле пароля очищается сразу после успеха.** Дальше нужен только
-  `conn_id`, а пароль в DOM — это пароль, который увидит любой, кто откроет
-  инструменты разработчика или сделает скриншот.
-- **Список колонок фильтруется по `translatable`.** Предлагать к переводу
-  числа и даты бессмысленно.
-
-Событие `change` у текстового поля срабатывает при потере фокуса — то есть
-когда пользователь дописал и ушёл дальше. Это то поведение, которое нужно;
-`input` дёргал бы сервер на каждую букву.
-
-**Обязательно показывайте ошибку.** Пустой список подсказок выглядит как
-«здесь ничего нет», и человек будет искать проблему у себя, а не в
-реквизитах.
-
-Всё это лежит на одной странице `index.html`, как вы и хотели: форма, блок
-ошибок, блок прогресса задания.
+JS понадобится в одном случае — когда перевод перестанет успевать за время
+HTTP-запроса и появится слой `jobs` (раздел 6). Тогда нужен будет опрос
+прогресса, и это ровно `setInterval` с `fetch` на одну ручку.
 
 ---
 
 ## 9. Полный сценарий одного прогона
 
 ```
-пользователь                       браузер            Flask                фон
-────────────┬──────────────────────────┬─────────────────┬──────────────────┬───
-выбрал СУБД │                          │                 │                  │
-ввёл сервер,│                          │                 │                  │
-логин,пароль│                          │                 │                  │
-и базу      │                          │                 │                  │
-«Подключить-├─ POST /api/connect ─────►│ probe() + registry.put()           │
-ся»         │◄── {"conn_id": "..."} ───┤                 │                  │
-            ├─ POST /api/tables ──────►│                 │                  │
-            │◄── список таблиц ────────┤                 │                  │
-ввёл таблицу├─ POST /api/columns ─────►│                 │                  │
-            │◄── список колонок ───────┤                 │                  │
-выбрал      │                          │                 │                  │
-колонки,    │                          │                 │                  │
-нажал       ├─ POST / ────────────────►│ validate_on_submit                 │
-«Перевести» │                          │ validate_against_db                │
-            │                          │ jobs.submit() ──┼─────────────────►│
-            │◄── {"job_id": "..."} ────┤                 │   count_distinct │
-            │                          │                 │   iter_distinct  │
-            ├─ GET /api/jobs/<id> ────►│                 │   prefilter      │
-            │◄── {"done": 120, ...} ───┤                 │   glossary/cache │
-            ├─ GET /api/jobs/<id> ────►│                 │   translate      │
-            │◄── {"done": 4300, ...} ──┤                 │   upload_mapping │
-            │                          │                 │   create_table   │
-            ├─ GET /api/jobs/<id> ────►│                 │   apply_mapping  │
-            │◄── {"status": "done"} ───┤◄────────────────┼──────── Report ──┤
-показали    │                          │                 │                  │
-отчёт       │                          │                 │                  │
+пользователь                  браузер                 Flask                  БД
+────────────┬────────────────────┬──────────────────────┬────────────────────────
+заполнил    │                    │                      │
+блок 1,     │                    │                      │
+нажал       ├─ POST / ──────────►│ run_query            │
+«Выполнить» │                    │   get_adapter        │
+            │                    │   query_columns ─────┼─► SELECT ... LIMIT 0
+            │◄── страница ───────┤   список колонок     │
+            │   с select         │                      │
+выбрал      │                    │                      │
+колонку,    │                    │                      │
+заполнил    │                    │                      │
+блок 2,     │                    │                      │
+нажал       ├─ POST / ──────────►│ run_translate        │
+«Выполнить  │                    │   count_distinct ────┼─► SELECT count(DISTINCT)
+перевод»    │                    │   iter_distinct ─────┼─► SELECT DISTINCT
+            │                    │   prefilter          │
+            │                    │   cache / glossary   │
+            │                    │   protect + движок   │
+            │◄── страница ───────┤   пары в блок 3      │
+            │   с переводами     │                      │
+поправил    │                    │                      │
+переводы,   │                    │                      │
+нажал       ├─ POST / ──────────►│ apply_result         │
+«Применить» │                    │   ensure_dictionary ─┼─► CREATE TABLE IF NOT EXISTS
+            │                    │   write_pairs ───────┼─► INSERT ... ON CONFLICT
+            │◄── «Записано: N» ──┤   правки в кэш       │
 ```
 
-Опрос прогресса — раз в 1–2 секунды, обычным `setInterval` с `fetch`.
+Обратите внимание: реквизиты обеих баз уходят на сервер в каждом из трёх
+запросов и нигде между ними не хранятся.
 
 ---
 
-## 10. Порядок сборки
+## 10. Безопасность: что надо знать про эту конструкцию
 
-Это, пожалуй, важнее самой структуры. Тот же принцип, что сработал в
-forecast_SP: **сначала то, где риск, а не то, что видно.**
+Три вещи, каждая — следствие принятых решений, а не недосмотр.
 
-**Шаг 1. `db/base.py` + `db/clickhouse.py` + `scripts/smoke.py`.**
-Скрипт без Flask: подключиться, перечислить базы, таблицы, колонки,
-посчитать distinct. Здесь вы узнаете все реальные особенности своих
-серверов, и узнаете их за минуты, а не через веб-форму.
+**Пароли в HTML страницы.** Следствие отказа от серверного хранения
+реквизитов (3.1). Смягчается `Cache-Control: no-store` и HTTPS; полностью
+убирается только возвратом к серверному хранению или переходом на JS, который
+держит реквизиты в памяти страницы.
 
-**Шаг 2. `core/prefilter.py` и `core/translate_client.py`.**
-Тот же `smoke.py` дополняете: взять 200 настоящих distinct-значений, прогнать
-через фильтр и через LibreTranslate, распечатать парами. **Это и есть тот
-замер качества, о котором мы говорили** — глазами по 200 строкам вы поймёте,
-годится движок или нет. До того, как написана хоть одна строка веб-интерфейса.
+**Приложение выполняет произвольный SQL от имени пользователя.** Это и есть
+назначение первого блока. Права при этом не приложения, а того, чьи реквизиты
+введены, — поэтому разграничение доступа работает само собой. Обязательные
+ограничители: режим read only и один оператор за раз (4.4).
 
-**Шаг 3. `core/cache.py` и `core/glossary.py`.**
-Таблица кэша, запись и чтение. Повторный прогон `smoke.py` должен почти не
-обращаться к движку.
-
-**Шаг 4. `core/pipeline.py` целиком, вызываемый из `smoke.py`.**
-Здесь же `create_table_like` и `apply_mapping` — и здесь вы наступите на
-ZooKeeper-путь, на виртуальные колонки и на пустые строки вместо NULL.
-Лучше наступить в консоли.
-
-**Шаг 5. Только теперь Flask:** фабрика, конфиг, форма, `index.html`,
-`api.py`, `jobs/registry.py`, JS.
-
-**Шаг 6. `postgres.py`** — второй адаптер по уже проверенному протоколу.
-К этому моменту вы точно знаете, какой контракт вам на самом деле нужен, и
-второй адаптер напишется за вечер.
-
-Соблазн начать с интерфейса, потому что он виден, велик. Но интерфейс — это
-самая простая и самая переделываемая часть, а протокол адаптера и пайплайн —
-самая дорогая.
+**Приложение подключается к любому адресу, который введут.** Авторизации у
+самого приложения нет — это внутренний инструмент. Если он станет доступен
+шире вашей команды, понадобится и авторизация, и белый список хостов.
 
 ---
 
-## 11. Чего в v1 сознательно не делаем
+## 11. Порядок сборки
+
+Это, пожалуй, важнее самой структуры: **сначала то, где риск, а не то, что
+видно.** Интерфейс к этому моменту уже написан — это как раз самая простая и
+самая переделываемая часть.
+
+**Шаг 1. `core/protect.py` с тестами.** Чистая стандартная библиотека, ни БД,
+ни движка не нужно, проверяется на любой машине. Самый окупаемый модуль, и
+единственный, который можно написать и проверить прямо сейчас.
+
+**Шаг 2. `db/base.py` + `db/postgres.py` + `scripts/smoke.py`.** Скрипт без
+Flask: подключиться, выполнить запрос, получить колонки, посчитать и вытащить
+`distinct`. Здесь вы узнаете все реальные особенности своих серверов, и
+узнаете их за минуты, а не через веб-форму.
+
+**Шаг 3. `core/translate_client.py` и замер качества.** Тот же `smoke.py`
+дополняете: взять 200 настоящих значений и прогнать их в трёх вариантах —
+сырой движок, движок с защитой метками, движок с защитой и глоссарием.
+Результат в один TSV, колонками рядом. **Это и есть тот замер, который решает,
+годится движок или нет** — и заодно первая версия глоссария из того, что
+придётся править руками.
+
+**Шаг 4. `core/cache.py` и `core/glossary.py`.** Повторный прогон `smoke.py`
+должен почти не обращаться к движку.
+
+**Шаг 5. `core/pipeline.py` целиком, вызываемый из `smoke.py`.**
+
+**Шаг 6. Подключить стыки в `routes.py`** — три функции, которые сейчас
+поднимают `NotImplementedError`.
+
+**Шаг 7. `db/clickhouse.py`** — второй адаптер по уже проверенному протоколу.
+К этому моменту вы точно знаете, какой контракт нужен, и он напишется за
+вечер.
+
+---
+
+## 12. Чего в v1 сознательно не делаем
 
 Список нужен, чтобы не расползтись:
 
-- **Celery, Redis, RQ** — `threading.Thread` и словарь в памяти достаточно
-  при `-w 1`. Очередь понадобится, когда появятся параллельные задания.
+- **Celery, Redis, RQ, фоновые потоки** — пока хватает синхронного
+  обработчика с ограничением по объёму, см. раздел 6.
 - **SQLAlchemy и любой ORM** — вы пишете DDL и bulk-SQL, ORM тут только
   мешает. Рефлекс «Flask → Flask-SQLAlchemy» подавить.
-- **Авторизация** — внутренний инструмент. Но помните: форма принимает адрес
-  сервера, то есть приложение может подключиться куда угодно в вашей сети.
-  Если это выйдет за пределы вашей команды, понадобится whitelist хостов.
-- **Переименование колонок** — вы сами решили оставить оригинальные имена.
-  Правильно: одна задача за раз.
+- **Авторизация** — внутренний инструмент, см. раздел 10.
+- **Копия исходной таблицы с переводом** — v1 отдаёт словарь, а не копию
+  данных. Рецепт копии на будущее — в 4.7.
 - **Enum-колонки в ClickHouse** — просто не предлагайте их к переводу.
-- **Годная обработка длинных текстов** — если в колонке абзацы, а не метки,
-  понадобится разбивка по предложениям. Отдельная задача, не сейчас.
+- **Разбивка длинных текстов по предложениям** — если в колонке абзацы, а не
+  метки, NMT-движку нужна разбивка. Отдельная задача, не сейчас.
+- **Автоопределение домена** — домен выбирается галочкой в форме. Угадывать
+  по данным можно, но это решение принимается один раз на прогон, и кликнуть
+  дешевле, чем отлаживать угадайку.
 
 ---
 
-## 12. Короткая шпаргалка «что где лежит»
+## 13. Короткая шпаргалка «что где лежит»
 
 | Вопрос | Файл |
 |---|---|
 | Как подключиться к ClickHouse | `app/db/clickhouse.py` |
 | Как подключиться к PostgreSQL | `app/db/postgres.py` |
-| Какой SQL создаёт новую таблицу | `app/db/*.py`, метод `create_table_like` |
+| Как выполняется запрос пользователя | `app/db/*.py`, метод `query_columns` / `iter_distinct` |
+| Какой SQL создаёт таблицу-словарь | `app/db/*.py`, метод `ensure_dictionary` |
 | Надо ли переводить это значение | `app/core/prefilter.py` |
+| Что внутри строки переводить нельзя | `app/core/protect.py` |
 | Как зафиксировать перевод термина | `app/core/glossary.py` |
 | Где хранятся прошлые переводы | `app/core/cache.py` |
 | Как устроен запрос к LibreTranslate | `app/core/translate_client.py` |
 | В каком порядке всё происходит | `app/core/pipeline.py` |
-| Почему задание не блокирует страницу | `app/jobs/registry.py` |
 | Какие поля в форме | `app/forms.py` |
-| Откуда берутся подсказки в полях | `app/views/api.py` + `static/js/index.js` |
-| Где живут реквизиты пользователя | `app/db/registry.py`, в памяти, с TTL |
-| Почему ручки подсказок POST, а не GET | раздел 3.1 |
-| Что лежит в `.env` | только `SECRET_KEY`, URL движка и порты |
+| Какая кнопка что делает | `app/routes.py` |
+| Где живут реквизиты пользователя | нигде: приходят в каждом POST, см. 3.1 |
+| Почему форма POST, а не GET | раздел 3.1 |
+| Почему нет JavaScript | раздел 8 |
+| Почему нет фоновых заданий | раздел 6 |
+| Что лежит в `.env` | только `SECRET_KEY` и адрес движка перевода |
