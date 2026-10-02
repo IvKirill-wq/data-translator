@@ -1,7 +1,77 @@
-{% extends 'base.html'%}
+{% extends 'base.html' %}
 
 {% block content %}
-<div>
-    <h1></h1>
-</div>
+<form method="post" novalidate autocomplete="off">
+    {{ form.hidden_tag() }}
+
+    {% if notice %}
+    <p class="notice">{{ notice }}</p>
+    {% endif %}
+
+    <section class="panel">
+        <h2 class="panel-title">1. База с переводимыми значениями</h2>
+        <div class="field-grid">
+            <label class="field">{{ form.src_engine.label }}{{ form.src_engine() }}</label>
+            <label class="field">{{ form.src_host.label }}{{ form.src_host() }}</label>
+            <label class="field">{{ form.src_port.label }}{{ form.src_port() }}</label>
+            <label class="field">{{ form.src_user.label }}{{ form.src_user() }}</label>
+            <label class="field">{{ form.src_password.label }}{{ form.src_password() }}</label>
+            <label class="field">{{ form.src_database.label }}{{ form.src_database() }}</label>
+        </div>
+        <label class="field field-full">{{ form.src_query.label }}{{ form.src_query(rows=6) }}</label>
+        <div class="panel-actions">
+            {{ form.run_query(class='btn') }}
+            <label class="field field-inline">{{ form.src_column.label }}{{ form.src_column() }}</label>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2 class="panel-title">2. База для переведённых значений</h2>
+        <div class="field-grid">
+            <label class="field">{{ form.dst_engine.label }}{{ form.dst_engine() }}</label>
+            <label class="field">{{ form.dst_host.label }}{{ form.dst_host() }}</label>
+            <label class="field">{{ form.dst_port.label }}{{ form.dst_port() }}</label>
+            <label class="field">{{ form.dst_user.label }}{{ form.dst_user() }}</label>
+            <label class="field">{{ form.dst_password.label }}{{ form.dst_password() }}</label>
+            <label class="field">{{ form.dst_database.label }}{{ form.dst_database() }}</label>
+            <label class="field">{{ form.dst_table.label }}{{ form.dst_table() }}</label>
+        </div>
+        <div class="panel-actions">
+            {{ form.run_translate(class='btn') }}
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2 class="panel-title">3. Значение и перевод</h2>
+        {% if pairs %}
+        <table class="pairs">
+            <thead>
+                <tr>
+                    <th>Значение</th>
+                    <th>Перевод</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for source, translation in pairs %}
+                <tr>
+                    <td>
+                        {{ source }}
+                        <input type="hidden" name="source" value="{{ source }}">
+                    </td>
+                    <td>
+                        <input type="text" name="translation" value="{{ translation }}">
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="panel-empty">Пусто. Выполните запрос, выберите колонку и нажмите «Выполнить перевод».</p>
+        {% endif %}
+    </section>
+
+    <div class="form-actions">
+        {{ form.apply_result(class='btn') }}
+    </div>
+</form>
 {% endblock %}

@@ -1,9 +1,10 @@
 import os
 
+
 class Config:
-    SECRET_KEY = os.getenv('SECRET_KEY')
+    SECRET_KEY = os.environ['SECRET_KEY']
 
-    LIBRE_TRANSLTE_URL = os.getenv('LIBRE_TRANSLTE_URL')
-    TRANSLATION_BATCH = int(os.getenv('TRANSLATION_BATCH'))
+    LIBRE_TRANSLATE_URL = os.environ['LIBRE_TRANSLATE_URL']
+    TRANSLATION_BATCH = int(os.environ.get('TRANSLATION_BATCH', '24'))
 
-    MAX_RU_DISTINCT_QTY = int(os.getenv('MAX_RU_DISTINCT_QTY'))
+    MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '50000'))
