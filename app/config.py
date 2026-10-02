@@ -8,3 +8,5 @@ class Config:
     TRANSLATION_BATCH = int(os.environ.get('TRANSLATION_BATCH', '24'))
 
     MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '50000'))
+
+    PISYA = 0
