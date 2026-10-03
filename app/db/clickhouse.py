@@ -9,10 +9,7 @@ def qi(name: str) -> str:
 
 class ClickHouseAdapter:
     def __init__(self, params):
-        self._client = clickhouse_connect.get_client(
-            host=params.host, port=params.port, username=params.user,
-            password=params.password, database=params.database,
-        )
+        self._client = clickhouse_connect.get_client(host=params.host, port=params.port, username=params.user, password=params.password, database=params.database,)
 
     def query_columns(self, sql_text):
         result = self._client.query(f'SELECT * FROM ({sql_text}) AS src LIMIT 0')

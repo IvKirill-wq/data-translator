@@ -4,8 +4,7 @@ from psycopg import sql
 
 class PostgresAdapter:
     def __init__(self, params):
-        self._params = dict(host=params.host, port=params.port, user=params.user,
-                            password=params.password, dbname=params.database)
+        self._params = dict(host=params.host, port=params.port, user=params.user, password=params.password, dbname=params.database)
 
     def iter_distinct(self, sql_text, column):
         query = sql.SQL(
