@@ -346,7 +346,7 @@ def qi(name: str) -> str:
 
 class ClickHouseAdapter:
     def __init__(self, params):
-        self._client = clickhouse_connect.get_client(
+        self._client = clickhouse_connect.get_client( 
             host=params.host, port=params.port, username=params.user,
             password=params.password, database=params.database,
         )
