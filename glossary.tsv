@@ -1,0 +1,25 @@
+# kind	source	target
+# whole	<русское значение целиком>	<английский перевод>
+# term	<русская подстрока>	<английская замена до движка>
+# term	<английский вариант движка>	<принятый английский термин>
+# keep	<подстрока, которую не переводить>
+
+whole	ООО	LLC
+whole	ОАО	OJSC
+whole	ЗАО	CJSC
+whole	АО	JSC
+whole	ПАО	PJSC
+whole	ИП	sole proprietor
+whole	ИНН	TIN
+whole	КПП	IEC
+whole	ОГРН	PSRN
+whole	НДС	VAT
+whole	да	yes
+whole	нет	no
+
+term	руб.	RUB
+term	коп.	kop.
+
+keep	ГОСТ
+keep	ТУ
+keep	СНиП

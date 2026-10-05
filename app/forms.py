@@ -1,8 +1,10 @@
 from flask_wtf import FlaskForm
 from wtforms import (
+    BooleanField,
     HiddenField,
     PasswordField,
     SelectField,
+    SelectMultipleField,
     StringField,
     SubmitField,
     TextAreaField,
@@ -24,7 +26,8 @@ class TranslationForm(FlaskForm):
     src_database = StringField('База данных', validators=[Optional()])
     src_query = TextAreaField('Запрос', validators=[Optional()])
     src_columns = HiddenField()
-    src_column = SelectField('Колонка', choices=[], validate_choice=False)
+    src_column = SelectMultipleField('Колонки', choices=[], validate_choice=False)
+    src_auto = BooleanField('Определить автоматически')
     run_query = SubmitField('Выполнить')
 
     dst_engine = SelectField('СУБД', choices=ENGINES)

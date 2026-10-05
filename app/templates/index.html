@@ -5,7 +5,7 @@
     {{ form.hidden_tag() }}
 
     {% if notice %}
-    <p class="notice">{{ notice }}</p>
+    <p class="notice notice-{{ notice_kind }}">{{ notice }}</p>
     {% endif %}
 
     <section class="panel">
@@ -19,9 +19,13 @@
             <label class="field">{{ form.src_database.label }}{{ form.src_database() }}</label>
         </div>
         <label class="field field-full">{{ form.src_query.label }}{{ form.src_query(rows=6) }}</label>
-        <div class="panel-actions">
+        <div class="panel-actions panel-actions-wrap">
             {{ form.run_query(class='btn') }}
-            <label class="field field-inline">{{ form.src_column.label }}{{ form.src_column() }}</label>
+            <label class="field field-columns">
+                {{ form.src_column.label }}{{ form.src_column(size=6) }}
+                <span class="field-hint">Ctrl или Shift — несколько колонок</span>
+            </label>
+            <label class="field field-check">{{ form.src_auto() }}{{ form.src_auto.label }}</label>
         </div>
     </section>
 
@@ -44,29 +48,42 @@
     <section class="panel">
         <h2 class="panel-title">3. Значение и перевод</h2>
         {% if pairs %}
-        <table class="pairs">
-            <thead>
-                <tr>
-                    <th>Значение</th>
-                    <th>Перевод</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for source, translation in pairs %}
-                <tr>
-                    <td>
-                        {{ source }}
-                        <input type="hidden" name="source" value="{{ source }}">
-                    </td>
-                    <td>
-                        <input type="text" name="translation" value="{{ translation }}">
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="tabs">
+            {% for column, rows in pairs.items() %}
+            <input type="radio" name="tab" class="tab-radio" id="tab-{{ loop.index }}"
+                   value="{{ column }}"{% if column == active %} checked{% endif %}>
+            <label class="tab-label" for="tab-{{ loop.index }}">
+                {{ column }}<span class="panel-count">{{ rows|length }}</span>
+            </label>
+            <div class="tab-pane">
+                <table class="pairs">
+                    <thead>
+                        <tr>
+                            <th>Значение</th>
+                            <th>Перевод</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pair in rows %}
+                        <tr>
+                            <td>
+                                {{ pair.source }}
+                                <input type="hidden" name="column" value="{{ column }}">
+                                <input type="hidden" name="source" value="{{ pair.source }}">
+                            </td>
+                            <td>
+                                <input type="text" name="translation" value="{{ pair.translation }}">
+                                <input type="hidden" name="machine" value="{{ pair.machine }}">
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endfor %}
+        </div>
         {% else %}
-        <p class="panel-empty">Пусто. Выполните запрос, выберите колонку и нажмите «Выполнить перевод».</p>
+        <p class="panel-empty">Пусто. Выполните запрос, выберите колонки и нажмите «Выполнить перевод».</p>
         {% endif %}
     </section>
 
