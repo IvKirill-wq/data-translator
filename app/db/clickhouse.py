@@ -29,8 +29,10 @@ class ClickHouseAdapter:
             for name, type_ in zip(result.column_names, result.column_types)
         ]
 
-    def count_distinct(self, sql_text, Column) -> int:
-        result = self._client.query (f'SELECT COUNT(DISTINCT {Column}) FROM ({sql_text}) AS  src')
+    def count_distinct(self, sql_text, column) -> int:
+        result = self._client.query (f'SELECT COUNT(DISTINCT {column}) FROM ({sql_text}) AS src')
+        return result.result_rows[0]
+    
     def iter_columns(self):
 
     def ensure_dictionary(self):
