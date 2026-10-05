@@ -23,33 +23,33 @@ class Glossary:
             if e.kind == 'whole' and e.dst
             }
 
-        self.terms: list[tuple[re.Pattern, str]] = [
+        self._terms: list[tuple[re.Pattern, str]] = [
             (self._word_re(e.src), e.dst)
             for e in self.entries
             if e.kind == 'terms' and e.dst
         ]
 
-def _load(self, domain:str) -> list[Entry]:
-    path = GLOSSARY_DIR / f'{domain}.yaml'
-    if not path.exists():
-        return []
-    
-    with path.open(encoding='utf-8') as f:
-        raw = yaml.safe_load(f) or []
+    def _load(self, domain:str) -> list[Entry]:
+        path = GLOSSARY_DIR / f'{domain}.yaml'
+        if not path.exists():
+            return []
+        
+        with path.open(encoding='utf-8') as f:
+            raw = yaml.safe_load(f) or []
 
-    return [Entry(**item) for item in raw]
+        return [Entry(**item) for item in raw]
 
-def lookup_whole(self, value:str):
-    return self.whole.get(value.strip())
+    def lookup_whole(self, value:str):
+        return self.whole.get(value.strip())
 
-@staticmethod
-def _word_re(src:str):
-    return re.compile(r'\b' + re.escape(src) + r'\b', re.IGNORECASE)
+    @staticmethod
+    def _word_re(src:str):
+        return re.compile(r'\b' + re.escape(src) + r'\b', re.IGNORECASE)
 
-def post_correct(self, text:str):
-    for pattern, dst in self._terms:
-        text = pattern.sub(dst, text)
-    return text
+    def post_correct(self, text:str):
+        for pattern, dst in self._terms:
+            text = pattern.sub(dst, text)
+        return text
 
-def add_entry(self, entry:Entry) -> None:
-    self.entries.append(entry)
+    def add_entry(self, entry:Entry) -> None:
+        self.entries.append(entry)
