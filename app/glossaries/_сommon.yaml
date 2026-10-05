@@ -1,0 +1,38 @@
+# Организационно-правовые формы
+- src: ООО
+  dst: LLC
+  kind: whole
+- src: ОАО
+  dst: OJSC
+  kind: whole
+- src: ЗАО
+  dst: CJSC
+  kind: whole
+- src: ИП
+  dst: sole proprietor
+  kind: whole
+
+# Реквизиты
+- src: ИНН
+  dst: TIN
+  kind: whole
+- src: КПП
+  dst: IEC
+  kind: whole
+- src: ОГРН
+  dst: PSRN
+  kind: whole
+
+# Стандарты и аббревиатуры
+- src: ГОСТ
+  kind: keep
+- src: ТУ
+  kind: keep
+- src: СНиП
+  kind: keep
+- src: руб.
+  dst: RUB
+  kind: term
+- src: коп.
+  dst: kop.
+  kind: term
