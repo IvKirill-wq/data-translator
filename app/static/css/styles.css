@@ -1,3 +1,7 @@
+:root {
+    --pairs-height: 420px;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -238,6 +242,14 @@ body {
     padding-top: 16px;
 }
 
+.pairs-scroll {
+    max-height: var(--pairs-height);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+}
+
 .tab-radio:checked + .tab-label + .tab-pane {
     display: block;
 }
@@ -268,20 +280,28 @@ body {
 }
 
 .pairs th {
+    position: sticky;
+    top: 0;
     text-align: left;
     font-weight: 600;
     color: #6b7280;
     font-size: 12px;
     text-transform: uppercase;
-    padding: 0 10px 8px 0;
-    border-bottom: 1px solid #e5e7eb;
+    padding: 10px;
+    background-color: #ffffff;
+    box-shadow: inset 0 -1px 0 #e5e7eb;
+    z-index: 1;
 }
 
 .pairs td {
-    padding: 8px 10px 8px 0;
+    padding: 8px 10px;
     border-bottom: 1px solid #f3f4f6;
     vertical-align: middle;
     width: 50%;
+}
+
+.pairs tr:last-child td {
+    border-bottom: none;
 }
 
 .pairs input[type="text"] {

@@ -37,6 +37,11 @@ def replace_all(rules: Sequence[tuple], text: str) -> str:
     return text
 
 
+def ordered(rules: Sequence[tuple]) -> tuple:
+    longest_first = sorted(rules, key=lambda rule: -rule[0])
+    return tuple((pattern, target) for _, pattern, target in longest_first)
+
+
 def term_pattern(source: str) -> re.Pattern:
     return re.compile(r'(?<!\w)' + re.escape(source) + r'(?!\w)', re.IGNORECASE)
 
@@ -64,5 +69,5 @@ def load(path) -> Glossary:
             whole[normalize_key(source)] = target
         elif target and kind == TERM:
             rules = pre if CYRILLIC.search(source) else post
-            rules.append((term_pattern(source), target))
-    return Glossary(whole, tuple(pre), tuple(post), tuple(keep))
+            rules.append((len(source), term_pattern(source), target))
+    return Glossary(whole, ordered(pre), ordered(post), tuple(keep))

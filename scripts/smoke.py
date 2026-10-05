@@ -6,7 +6,6 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-from app.core.cache import Cache
 from app.core.glossary import load as load_glossary
 from app.core.pipeline import Pair, apply, collect, translate
 from app.core.protect import Protector
@@ -32,7 +31,6 @@ def arguments():
     parser.add_argument('--key', default=os.environ.get('LIBRE_TRANSLATE_KEY', ''))
     parser.add_argument('--batch', type=int, default=24)
     parser.add_argument('--timeout', type=int, default=120)
-    parser.add_argument('--cache', default=str(BASE_DIR / 'instance' / 'translations.sqlite3'))
     parser.add_argument('--glossary', default=str(BASE_DIR / 'glossary.tsv'))
 
     parser.add_argument('--out')
@@ -102,17 +100,15 @@ def read_pairs(path: str) -> dict:
         fields = line.split('\t')
         if len(fields) < 3:
             continue
-        column, source, translation = fields[0], fields[1], fields[2]
-        machine = fields[3] if len(fields) > 3 else ''
-        pairs.setdefault(column, []).append(
-            Pair(source=source, translation=translation, machine=machine)
+        pairs.setdefault(fields[0], []).append(
+            Pair(source=fields[1], translation=fields[2])
         )
     return pairs
 
 
 def write_pairs(pairs: dict, path) -> None:
     lines = [
-        f'{column}\t{pair.source}\t{pair.translation}\t{pair.machine}'
+        f'{column}\t{pair.source}\t{pair.translation}'
         for column, rows in pairs.items()
         for pair in rows
     ]
@@ -147,7 +143,6 @@ def main() -> None:
         print(f'строк просмотрено: {rows}, колонки: {found}', file=sys.stderr)
         result = translate(
             values,
-            Cache(options.cache),
             glossary,
             Protector(keep=glossary.keep),
             LibreTranslateClient(
@@ -159,8 +154,8 @@ def main() -> None:
         stats = result.stats
         print(
             f'значений: {stats.values}, движок: {stats.engine}, без защиты: {stats.raw}, '
-            f'память: {stats.cache}, глоссарий: {stats.glossary}, '
-            f'защищено целиком: {stats.protected}, откат: {stats.fallback}',
+            f'глоссарий: {stats.glossary}, защищено целиком: {stats.protected}, '
+            f'откат: {stats.fallback}',
             file=sys.stderr,
         )
         write_pairs(pairs, options.out)
@@ -174,7 +169,6 @@ def main() -> None:
         sql_text,
         pairs,
         options.to_table,
-        cache=Cache(options.cache),
         batch=options.insert_batch,
     )
     print(

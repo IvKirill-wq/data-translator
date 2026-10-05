@@ -1,25 +1,179 @@
-# kind	source	target
-# whole	<русское значение целиком>	<английский перевод>
-# term	<русская подстрока>	<английская замена до движка>
-# term	<английский вариант движка>	<принятый английский термин>
-# keep	<подстрока, которую не переводить>
+# Глоссарий переводов ru → en. Три вида правил, по одному на строку, поля через TAB:
+#
+#   whole	<русское значение целиком>	<английский перевод>
+#       срабатывает, когда ВСЁ значение равно указанному; движок не вызывается
+#   term	<русская подстрока>	<английская замена>
+#       подставляется в русскую строку ДО движка, дальше латиница защищается сама
+#   term	<английское слово движка>	<принятый у вас английский термин>
+#       правит ответ движка, когда он выбрал синоним
+#   keep	<подстрока>
+#       никогда не переводить (маскируется на время перевода)
+#
+# Регистр, «ё/е» и лишние пробелы не важны: значения нормализуются, а правила
+# term сравниваются без учёта регистра. Писать варианты «ООО / ооо / Ооо»
+# не нужно — достаточно одной формы.
+# Длинные варианты применяются раньше коротких независимо от порядка строк.
 
+# ── Организационно-правовые формы ────────────────────────────────────────────
 whole	ООО	LLC
-whole	ОАО	OJSC
-whole	ЗАО	CJSC
 whole	АО	JSC
 whole	ПАО	PJSC
+whole	ОАО	OJSC
+whole	ЗАО	CJSC
+whole	НАО	NPJSC
+whole	ОДО	ALC
 whole	ИП	sole proprietor
+whole	ГУП	SUE
+whole	МУП	MUE
+whole	ФГУП	FSUE
+whole	ФГБУ	FSBI
+whole	ГБУ	SBI
+whole	МБУ	MBI
+whole	АНО	ANPO
+whole	НКО	NPO
+whole	ТСЖ	HOA
+whole	СНТ	gardening association
+whole	КФХ	private farm
+whole	ЮЛ	legal entity
+whole	ФЛ	individual
+
+term	Общество с ограниченной ответственностью	LLC
+term	Общество с дополнительной ответственностью	ALC
+term	Публичное акционерное общество	PJSC
+term	Непубличное акционерное общество	NPJSC
+term	Открытое акционерное общество	OJSC
+term	Закрытое акционерное общество	CJSC
+term	Акционерное общество	JSC
+term	Индивидуальный предприниматель	sole proprietor
+term	Федеральное государственное унитарное предприятие	FSUE
+term	Государственное унитарное предприятие	SUE
+term	Муниципальное унитарное предприятие	MUE
+term	Федеральное государственное бюджетное учреждение	FSBI
+term	Государственное бюджетное учреждение	SBI
+term	Муниципальное бюджетное учреждение	MBI
+term	Автономная некоммерческая организация	ANPO
+term	Некоммерческая организация	NPO
+term	Товарищество собственников жилья	HOA
+term	Садовое некоммерческое товарищество	gardening non-profit association
+term	Крестьянское фермерское хозяйство	private farm enterprise
+term	Юридическое лицо	legal entity
+term	Физическое лицо	individual
+term	Обособленное подразделение	separate subdivision
+term	Представительство	representative office
+term	Филиал	branch
+
+# ── Реквизиты и регистры ────────────────────────────────────────────────────
 whole	ИНН	TIN
 whole	КПП	IEC
 whole	ОГРН	PSRN
-whole	НДС	VAT
-whole	да	yes
-whole	нет	no
+whole	ОГРНИП	PSRNSP
+whole	ОКПО	OKPO
+whole	ОКВЭД	OKVED
+whole	ОКТМО	OKTMO
+whole	ОКАТО	OKATO
+whole	ОКОПФ	OKOPF
+whole	ОКФС	OKFS
+whole	БИК	BIC
+whole	КБК	budget classification code
+whole	СНИЛС	SNILS
+whole	ЕГРЮЛ	Unified State Register of Legal Entities
+whole	ЕГРИП	Unified State Register of Individual Entrepreneurs
 
+term	ИНН	TIN
+term	КПП	IEC
+term	ОГРНИП	PSRNSP
+term	ОГРН	PSRN
+term	ОКВЭД	OKVED
+term	ОКТМО	OKTMO
+term	СНИЛС	SNILS
+term	Расчётный счёт	current account
+term	Корреспондентский счёт	correspondent account
+term	Лицевой счёт	personal account
+term	Юридический адрес	registered address
+term	Фактический адрес	actual address
+term	Почтовый адрес	mailing address
+
+# ── Налоги, взносы, фонды ───────────────────────────────────────────────────
+whole	НДС	VAT
+whole	НДФЛ	personal income tax
+whole	УСН	simplified tax system
+whole	ОСНО	general tax system
+whole	ЕНВД	unified tax on imputed income
+whole	ПСН	patent tax system
+whole	ЕСХН	unified agricultural tax
+whole	АУСН	automated simplified tax system
+whole	ОМС	mandatory health insurance
+whole	ОПС	mandatory pension insurance
+whole	ОСС	mandatory social insurance
+whole	ФНС	Federal Tax Service
+whole	ФСС	Social Insurance Fund
+whole	ПФР	Pension Fund
+whole	СФР	Social Fund of Russia
+whole	ФОМС	Mandatory Health Insurance Fund
+
+term	НДС не облагается	not subject to VAT
+term	Без НДС	VAT exempt
+term	В том числе НДС	including VAT
+term	НДС	VAT
+term	НДФЛ	personal income tax
+term	Налог на прибыль	corporate income tax
+term	Налог на имущество	property tax
+term	Транспортный налог	transport tax
+term	Земельный налог	land tax
+term	Страховые взносы	insurance contributions
+term	Недоимка	tax arrears
+term	Переплата	overpayment
+
+# ── Документы ───────────────────────────────────────────────────────────────
+term	Акт выполненных работ	work completion certificate
+term	Акт оказанных услуг	service completion certificate
+term	Акт приёма-передачи	handover certificate
+term	Акт сверки взаимных расчётов	mutual settlement reconciliation statement
+term	Акт сверки	reconciliation statement
+term	Товарно-транспортная накладная	consignment and transport note
+term	Товарная накладная	consignment note
+term	Транспортная накладная	transport note
+term	Универсальный передаточный документ	universal transfer document
+term	УПД	universal transfer document
+term	Счёт-фактура	VAT invoice
+term	Счёт на оплату	invoice for payment
+term	Платёжное поручение	payment order
+term	Дополнительное соглашение	supplementary agreement
+term	Доверенность	power of attorney
+term	Техническое задание	statement of work
+term	Устав	articles of association
+term	Спецификация	specification
+term	Калькуляция	cost calculation
+term	Прайс-лист	price list
+term	Квитанция	receipt
+term	Накладная	delivery note
+term	Смета	cost estimate
+
+# ── Единицы, суммы, пометки ─────────────────────────────────────────────────
+term	тыс. руб.	RUB thousand
+term	млн руб.	RUB million
+term	млрд руб.	RUB billion
 term	руб.	RUB
 term	коп.	kop.
+term	шт.	pcs
+term	чел.	persons
+term	ед. изм.	unit of measure
+term	ед.	unit
+term	в т.ч.	including
+term	Итого	total
+term	Всего	total
+term	Не указано	not specified
+term	Нет данных	no data
+whole	да	yes
+whole	нет	no
+whole	Прочее	other
 
+# ── Не переводить ───────────────────────────────────────────────────────────
 keep	ГОСТ
+keep	ОСТ
+keep	СТО
 keep	ТУ
 keep	СНиП
+keep	СанПиН
+keep	ПУЭ
+keep	РД

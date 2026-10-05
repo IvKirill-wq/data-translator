@@ -56,6 +56,7 @@
                 {{ column }}<span class="panel-count">{{ rows|length }}</span>
             </label>
             <div class="tab-pane">
+                <div class="pairs-scroll">
                 <table class="pairs">
                     <thead>
                         <tr>
@@ -73,12 +74,12 @@
                             </td>
                             <td>
                                 <input type="text" name="translation" value="{{ pair.translation }}">
-                                <input type="hidden" name="machine" value="{{ pair.machine }}">
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+                </div>
             </div>
             {% endfor %}
         </div>

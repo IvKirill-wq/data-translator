@@ -2,7 +2,6 @@ from itertools import zip_longest
 
 from flask import Blueprint, current_app, make_response, render_template, request
 
-from .core.cache import Cache
 from .core.glossary import load as load_glossary
 from .core.pipeline import Pair, apply, collect, translate
 from .core.protect import Protector
@@ -42,10 +41,6 @@ def chosen_columns(form) -> list:
     return [name for name in (form.src_column.data or []) if name]
 
 
-def build_cache() -> Cache:
-    return Cache(current_app.config['CACHE_PATH'])
-
-
 def build_translator() -> LibreTranslateClient:
     return LibreTranslateClient(
         current_app.config['LIBRE_TRANSLATE_URL'],
@@ -71,7 +66,6 @@ def build_translations(form):
     )
     return translate(
         values,
-        build_cache(),
         glossary,
         Protector(keep=glossary.keep),
         build_translator(),
@@ -86,7 +80,6 @@ def write_to_target(form, pairs):
         source_query(form),
         pairs,
         (form.dst_table.data or '').strip(),
-        cache=build_cache(),
         batch=current_app.config['INSERT_BATCH'],
     )
 
@@ -124,16 +117,13 @@ def posted_pairs():
     columns = request.form.getlist('column')
     sources = request.form.getlist('source')
     translations = request.form.getlist('translation')
-    machines = request.form.getlist('machine')
     pairs: dict = {}
-    for column, source, translation, machine in zip_longest(
-        columns, sources, translations, machines, fillvalue=''
+    for column, source, translation in zip_longest(
+        columns, sources, translations, fillvalue=''
     ):
         if not column or not source:
             continue
-        pairs.setdefault(column, []).append(
-            Pair(source=source, translation=translation, machine=machine)
-        )
+        pairs.setdefault(column, []).append(Pair(source=source, translation=translation))
     return pairs
 
 
@@ -157,7 +147,7 @@ def translation_notice(result) -> str:
     return (
         f'Строк просмотрено: {stats.rows}. Колонки: {columns}. '
         f'Значений к переводу: {stats.values}. Движок: {stats.engine}, '
-        f'без защиты: {stats.raw}, память: {stats.cache}, глоссарий: {stats.glossary}, '
+        f'без защиты: {stats.raw}, глоссарий: {stats.glossary}, '
         f'защищено целиком: {stats.protected}, откат на оригинал: {stats.fallback}.'
     )
 

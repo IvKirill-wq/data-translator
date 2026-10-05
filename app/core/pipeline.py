@@ -17,7 +17,6 @@ class PipelineError(RuntimeError):
 class Pair:
     source: str
     translation: str
-    machine: str = ''
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,6 @@ class Stats:
     columns: int = 0
     engine: int = 0
     raw: int = 0
-    cache: int = 0
     glossary: int = 0
     protected: int = 0
     fallback: int = 0
@@ -103,30 +101,16 @@ def collect(adapter, sql_text: str, columns: Sequence[str], limit: int) -> tuple
     return {name: bucket for name, bucket in values.items() if bucket}, rows
 
 
-def decide(values: dict, cache, glossary, protector, translator) -> tuple[dict, dict, list]:
+def decide(values: dict, glossary, protector, translator) -> tuple[dict, dict]:
     decided: dict = {}
-    engine_keys: list = []
     queue: list = []
-    counters = {'engine': 0, 'raw': 0, 'cache': 0, 'glossary': 0, 'protected': 0, 'fallback': 0}
-
-    stored = cache.fetch(values.keys()) if cache is not None else {}
+    counters = {'engine': 0, 'raw': 0, 'glossary': 0, 'protected': 0, 'fallback': 0}
 
     for key in values:
-        entry = stored.get(key)
-        if entry is not None and not entry[0].strip():
-            entry = None
-        if entry is not None and entry[1]:
-            decided[key] = entry[0]
-            counters['cache'] += 1
-            continue
         whole = glossary.value_for(key)
         if whole:
             decided[key] = whole
             counters['glossary'] += 1
-            continue
-        if entry is not None:
-            decided[key] = entry[0]
-            counters['cache'] += 1
             continue
         queue.append(key)
 
@@ -154,7 +138,6 @@ def decide(values: dict, cache, glossary, protector, translator) -> tuple[dict, 
                 continue
             decided[key] = restored.strip()
             counters['engine'] += 1
-            engine_keys.append(key)
         if lost:
             plain = translator.translate([prepared_by_key[key] for key in lost])
             for key, answer in zip(lost, plain):
@@ -165,33 +148,29 @@ def decide(values: dict, cache, glossary, protector, translator) -> tuple[dict, 
                     continue
                 decided[key] = text
                 counters['raw'] += 1
-                engine_keys.append(key)
 
     missing = [key for key in values if key not in decided]
     if missing:
         raise PipelineError(
             f'движок перевода вернул меньше значений, чем принял: {len(missing)} без ответа'
         )
-    return decided, counters, engine_keys
+    return decided, counters
 
 
 def translate(
-    values_by_column: dict, cache, glossary, protector, translator, rows: int = 0
+    values_by_column: dict, glossary, protector, translator, rows: int = 0
 ) -> Translated:
     merged: dict = {}
     for bucket in values_by_column.values():
         for key, text in bucket.items():
             merged.setdefault(key, text)
 
-    decided, counters, engine_keys = decide(merged, cache, glossary, protector, translator)
-
-    if cache is not None and engine_keys:
-        cache.save([(key, merged[key], decided[key]) for key in engine_keys], reviewed=False)
+    decided, counters = decide(merged, glossary, protector, translator)
 
     pairs: dict = {}
     for name, bucket in values_by_column.items():
         rendered = [
-            Pair(source=bucket[key], translation=decided[key], machine=decided[key])
+            Pair(source=bucket[key], translation=decided[key])
             for key in bucket
         ]
         rendered.sort(key=lambda pair: pair.source.casefold())
@@ -257,25 +236,16 @@ def apply(
     sql_text: str,
     pairs_by_column: dict,
     table: str,
-    cache=None,
     batch: int = 10_000,
 ) -> Applied:
     by_column: dict = {}
-    edited: list = []
-    seen: list = []
     for name, pairs in pairs_by_column.items():
         mapping: dict = {}
         for pair in pairs:
             translation = (pair.translation or '').strip()
             if not translation:
                 continue
-            key = normalize_key(pair.source)
-            mapping[key] = translation
-            entry = (key, pair.source, translation)
-            if translation == (pair.machine or '').strip():
-                seen.append(entry)
-            else:
-                edited.append(entry)
+            mapping[normalize_key(pair.source)] = translation
         if mapping:
             by_column[name] = mapping
     if not by_column:
@@ -295,9 +265,6 @@ def apply(
             clear=action == REPLACED,
         )
 
-    if cache is not None:
-        cache.save(seen, reviewed=False)
-        cache.save(edited, reviewed=True)
     return Applied(
         written=written,
         replaced=hits[0],

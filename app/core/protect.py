@@ -15,21 +15,23 @@ class Protector:
         self,
         keep: Sequence[str] = (),
         marker: str = MARKER,
+        quotes: bool = False,
         numbers: bool = False,
     ):
         self._marker = marker
         self._keep = tuple(sorted({term for term in keep if term}, key=len, reverse=True))
-        self._pattern = self._build(numbers)
+        self._pattern = self._build(quotes, numbers)
         self._finder = re.compile(
             re.escape(marker).replace(r'\{\}', r'(\d+)'), re.IGNORECASE
         )
 
-    def _build(self, numbers: bool) -> re.Pattern:
+    def _build(self, quotes: bool, numbers: bool) -> re.Pattern:
         parts = []
         if self._keep:
             terms = '|'.join(re.escape(term) for term in self._keep)
             parts.append(r'(?<!\w)(?:' + terms + r')(?!\w)')
-        parts.append(QUOTED)
+        if quotes:
+            parts.append(QUOTED)
         parts.append(LATIN)
         if numbers:
             parts.append(NUMBER)
