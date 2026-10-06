@@ -17,4 +17,4 @@ class Config:
     MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '5000'))
     INSERT_BATCH = int(os.environ.get('INSERT_BATCH', '10000'))
 
-    GLOSSARY_PATH = os.environ.get('GLOSSARY_PATH') or str(BASE_DIR / 'glossary.tsv')
+    GLOSSARY_PATH = os.environ.get('GLOSSARY_PATH') or str(BASE_DIR / 'glossary.ini')

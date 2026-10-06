@@ -1,14 +1,20 @@
+import configparser
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from .prefilter import CYRILLIC, normalize_key
+from .prefilter import normalize_key
 
 WHOLE = 'whole'
-TERM = 'term'
+BEFORE = 'before'
+AFTER = 'after'
 KEEP = 'keep'
-KINDS = (WHOLE, TERM, KEEP)
+SECTIONS = (WHOLE, BEFORE, AFTER, KEEP)
+
+
+class GlossaryError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -37,37 +43,73 @@ def replace_all(rules: Sequence[tuple], text: str) -> str:
     return text
 
 
+def term_pattern(source: str) -> re.Pattern:
+    head = r'(?<!\w)' if source[:1].isalnum() else ''
+    tail = r'(?!\w)' if source[-1:].isalnum() else ''
+    return re.compile(head + re.escape(source) + tail, re.IGNORECASE)
+
+
 def ordered(rules: Sequence[tuple]) -> tuple:
     longest_first = sorted(rules, key=lambda rule: -rule[0])
     return tuple((pattern, target) for _, pattern, target in longest_first)
 
 
-def term_pattern(source: str) -> re.Pattern:
-    return re.compile(r'(?<!\w)' + re.escape(source) + r'(?!\w)', re.IGNORECASE)
+def reader() -> configparser.RawConfigParser:
+    parser = configparser.RawConfigParser(
+        delimiters=('=',),
+        comment_prefixes=('#', ';'),
+        inline_comment_prefixes=None,
+        allow_no_value=True,
+        strict=False,
+    )
+    parser.optionxform = str
+    return parser
+
+
+def pairs(parser, section: str, problems: list) -> list:
+    if not parser.has_section(section):
+        return []
+    found = []
+    for source, target in parser.items(section):
+        name = source.strip()
+        if not name:
+            continue
+        if target is None or not target.strip():
+            problems.append(f'[{section}] «{name}» — нет перевода после знака =')
+            continue
+        found.append((name, target.strip()))
+    return found
 
 
 def load(path) -> Glossary:
     file = Path(path)
     if not file.is_file():
         return EMPTY
-    whole: dict = {}
-    pre: list = []
-    post: list = []
-    keep: list = []
-    for line in file.read_text(encoding='utf-8').splitlines():
-        row = line.strip()
-        if not row or row.startswith('#'):
-            continue
-        fields = [field.strip() for field in row.split('\t') if field.strip() != '']
-        if len(fields) < 2 or fields[0] not in KINDS:
-            continue
-        kind, source = fields[0], fields[1]
-        target = fields[2] if len(fields) > 2 else ''
-        if kind == KEEP:
-            keep.append(source)
-        elif target and kind == WHOLE:
-            whole[normalize_key(source)] = target
-        elif target and kind == TERM:
-            rules = pre if CYRILLIC.search(source) else post
-            rules.append((len(source), term_pattern(source), target))
-    return Glossary(whole, ordered(pre), ordered(post), tuple(keep))
+    expected = ', '.join(f'[{name}]' for name in SECTIONS)
+    parser = reader()
+    try:
+        parser.read_string(file.read_text(encoding='utf-8'), source=file.name)
+    except configparser.MissingSectionHeaderError as error:
+        raise GlossaryError(
+            f'глоссарий {file.name}, строка {error.lineno}: правило должно лежать '
+            f'внутри раздела — {expected}'
+        ) from error
+    except configparser.Error as error:
+        raise GlossaryError(f'глоссарий {file.name}: {error}') from error
+
+    problems = [
+        f'раздел [{name}] не распознан, бывают только {expected}'
+        for name in parser.sections()
+        if name not in SECTIONS
+    ]
+
+    whole = {normalize_key(source): target for source, target in pairs(parser, WHOLE, problems)}
+    pre = [(len(source), term_pattern(source), target)
+           for source, target in pairs(parser, BEFORE, problems)]
+    post = [(len(source), term_pattern(source), target)
+            for source, target in pairs(parser, AFTER, problems)]
+    keep = [source.strip() for source, _ in parser.items(KEEP)] if parser.has_section(KEEP) else []
+
+    if problems:
+        raise GlossaryError(f'глоссарий {file.name}: ' + '; '.join(problems))
+    return Glossary(whole, ordered(pre), ordered(post), tuple(source for source in keep if source))
