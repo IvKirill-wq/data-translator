@@ -45,6 +45,7 @@ def build_translator() -> LibreTranslateClient:
     return LibreTranslateClient(
         current_app.config['LIBRE_TRANSLATE_URL'],
         batch=current_app.config['TRANSLATION_BATCH'],
+        chars=current_app.config['TRANSLATION_CHARS'],
         timeout=current_app.config['TRANSLATION_TIMEOUT'],
         api_key=current_app.config['LIBRE_TRANSLATE_KEY'],
     )
@@ -141,15 +142,31 @@ def form_errors(form) -> str:
     return 'Форма не принята — ' + '. '.join(problems) + '. Обновите страницу и повторите.'
 
 
+SOURCE_LABELS = (
+    ('engine', 'движок'),
+    ('raw', 'без защиты'),
+    ('glossary', 'глоссарий'),
+    ('protected', 'защищено целиком'),
+    ('fallback', 'откат на оригинал'),
+    ('timeout', 'не уложилось в таймаут'),
+)
+
+
 def translation_notice(result) -> str:
     stats = result.stats
     columns = ', '.join(result.pairs) or 'нет'
-    return (
+    sources = [
+        f'{label}: {getattr(stats, name)}'
+        for name, label in SOURCE_LABELS
+        if getattr(stats, name)
+    ]
+    notice = (
         f'Строк просмотрено: {stats.rows}. Колонки: {columns}. '
-        f'Значений к переводу: {stats.values}. Движок: {stats.engine}, '
-        f'без защиты: {stats.raw}, глоссарий: {stats.glossary}, '
-        f'защищено целиком: {stats.protected}, откат на оригинал: {stats.fallback}.'
+        f'Значений к переводу: {stats.values}.'
     )
+    if sources:
+        notice += ' ' + ', '.join(sources) + '.'
+    return notice
 
 
 @bp.route('/', methods=['GET', 'POST'])

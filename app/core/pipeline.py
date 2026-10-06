@@ -29,6 +29,7 @@ class Stats:
     glossary: int = 0
     protected: int = 0
     fallback: int = 0
+    timeout: int = 0
 
 
 @dataclass(frozen=True)
@@ -104,7 +105,8 @@ def collect(adapter, sql_text: str, columns: Sequence[str], limit: int) -> tuple
 def decide(values: dict, glossary, protector, translator) -> tuple[dict, dict]:
     decided: dict = {}
     queue: list = []
-    counters = {'engine': 0, 'raw': 0, 'glossary': 0, 'protected': 0, 'fallback': 0}
+    counters = {'engine': 0, 'raw': 0, 'glossary': 0, 'protected': 0, 'fallback': 0,
+                'timeout': 0}
 
     for key in values:
         whole = glossary.value_for(key)
@@ -132,6 +134,10 @@ def decide(values: dict, glossary, protector, translator) -> tuple[dict, dict]:
         answers = translator.translate([text for _, text in masked])
         lost: list = []
         for (key, _), answer in zip(masked, answers):
+            if answer is None:
+                decided[key] = prepared_by_key[key]
+                counters['timeout'] += 1
+                continue
             restored = protector.unmask(glossary.fix_terms(answer), parts_by_key[key])
             if restored is None or not restored.strip():
                 lost.append(key)
@@ -141,6 +147,10 @@ def decide(values: dict, glossary, protector, translator) -> tuple[dict, dict]:
         if lost:
             plain = translator.translate([prepared_by_key[key] for key in lost])
             for key, answer in zip(lost, plain):
+                if answer is None:
+                    decided[key] = prepared_by_key[key]
+                    counters['timeout'] += 1
+                    continue
                 text = glossary.fix_terms(answer).strip()
                 if not text:
                     decided[key] = prepared_by_key[key]

@@ -8,12 +8,6 @@
 #       правит ответ движка, когда он выбрал синоним
 #   keep	<подстрока>
 #       никогда не переводить (маскируется на время перевода)
-#
-# Регистр, «ё/е» и лишние пробелы не важны: значения нормализуются, а правила
-# term сравниваются без учёта регистра. Писать варианты «ООО / ооо / Ооо»
-# не нужно — достаточно одной формы.
-# Длинные варианты применяются раньше коротких независимо от порядка строк.
-
 # ── Организационно-правовые формы ────────────────────────────────────────────
 whole	ООО	LLC
 whole	АО	JSC
@@ -61,6 +55,13 @@ term	Физическое лицо	individual
 term	Обособленное подразделение	separate subdivision
 term	Представительство	representative office
 term	Филиал	branch
+term    Проект №    Project No.
+term	СФР Social Fund of Russia
+term   ФОМС    Mandatory Health Insurance Fund
+term   ЦОД DC
+term   Работает  Running
+term   Выключено Powered off
+term   СХД DSS
 
 # ── Реквизиты и регистры ────────────────────────────────────────────────────
 whole	ИНН	TIN
@@ -108,8 +109,6 @@ whole	ОСС	mandatory social insurance
 whole	ФНС	Federal Tax Service
 whole	ФСС	Social Insurance Fund
 whole	ПФР	Pension Fund
-whole	СФР	Social Fund of Russia
-whole	ФОМС	Mandatory Health Insurance Fund
 
 term	НДС не облагается	not subject to VAT
 term	Без НДС	VAT exempt
@@ -167,13 +166,3 @@ term	Нет данных	no data
 whole	да	yes
 whole	нет	no
 whole	Прочее	other
-
-# ── Не переводить ───────────────────────────────────────────────────────────
-keep	ГОСТ
-keep	ОСТ
-keep	СТО
-keep	ТУ
-keep	СНиП
-keep	СанПиН
-keep	ПУЭ
-keep	РД

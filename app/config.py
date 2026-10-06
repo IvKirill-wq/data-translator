@@ -11,6 +11,7 @@ class Config:
     LIBRE_TRANSLATE_URL = os.environ['LIBRE_TRANSLATE_URL']
     LIBRE_TRANSLATE_KEY = os.environ.get('LIBRE_TRANSLATE_KEY', '')
     TRANSLATION_BATCH = int(os.environ.get('TRANSLATION_BATCH', '24'))
+    TRANSLATION_CHARS = int(os.environ.get('TRANSLATION_CHARS', '1200'))
     TRANSLATION_TIMEOUT = int(os.environ.get('TRANSLATION_TIMEOUT', '120'))
 
     MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '5000'))
