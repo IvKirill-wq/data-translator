@@ -1,16 +1,62 @@
+import logging
 from contextlib import contextmanager
 from typing import Iterator, Sequence
 
 import psycopg
-from psycopg import postgres, sql
+from psycopg import postgres, pq, sql
 
 from .base import Column, ConnParams, DbError, ensure_unique, split_table
 from .types import clip_name, pg_ddl, pg_kind, pg_name
+
+LOG = logging.getLogger(__name__)
 
 ITERSIZE = 10_000
 CURSOR_NAME = 'data_translator'
 LOCK_TIMEOUT = '10s'
 ENGINE = 'PostgreSQL'
+TEMPORAL_TYPES = ('date', 'timestamp', 'timestamptz')
+LENIENT_CACHE: dict = {}
+
+
+def lenient(base: type) -> type:
+    ready = LENIENT_CACHE.get(base)
+    if ready is not None:
+        return ready
+
+    class LenientLoader(base):
+        _warned = False
+
+        def load(self, data):
+            try:
+                return super().load(data)
+            except psycopg.DataError as error:
+                if not self._warned:
+                    LOG.warning(
+                        '%s: значение даты вне диапазона Python прочитано как NULL (%s)',
+                        ENGINE, error,
+                    )
+                    self._warned = True
+                return None
+
+    LenientLoader.__name__ = 'Lenient' + base.__name__
+    LENIENT_CACHE[base] = LenientLoader
+    return LenientLoader
+
+
+def lenient_loaders(conn) -> list:
+    found = []
+    for name in TEMPORAL_TYPES:
+        try:
+            info = postgres.types.get(name)
+        except Exception:
+            info = None
+        if info is None:
+            continue
+        for fmt in (pq.Format.TEXT, pq.Format.BINARY):
+            base = conn.adapters.get_loader(info.oid, fmt)
+            if base is not None:
+                found.append((info.oid, lenient(base)))
+    return found
 
 
 def type_name(oid: int) -> str:
@@ -83,6 +129,11 @@ class PostgresAdapter:
             conn = psycopg.connect(**self._params)
         except psycopg.Error as error:
             raise DbError(f'{ENGINE}: подключение не удалось: {error}') from error
+        try:
+            for oid, loader in lenient_loaders(conn):
+                conn.adapters.register_loader(oid, loader)
+        except psycopg.Error as error:
+            LOG.warning('%s: не удалось подменить загрузчики даты: %s', ENGINE, error)
         try:
             yield conn
         finally:

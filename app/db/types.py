@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Sequence
 
 from .base import (
@@ -84,6 +84,10 @@ CH_DECIMAL_WIDTH = {'32': 9, '64': 18, '128': 38, '256': 76}
 
 PG_NAME_LIMIT = 63
 CH_PRECISION_LIMIT = 76
+CH_MIN_DATE = date(1900, 1, 1)
+CH_MAX_DATE = date(2299, 12, 31)
+CH_MIN_TIME = datetime(1900, 1, 1, tzinfo=timezone.utc)
+CH_MAX_TIME = datetime(2299, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
 
 def clip_name(name: str, limit: int = PG_NAME_LIMIT) -> str:
@@ -148,12 +152,28 @@ def decimal_spec(column: Column) -> tuple[int, int]:
     return precision, min(scale, precision)
 
 
-def stamp_utc(row: tuple, positions: Sequence[int]) -> tuple:
+def fit_temporal(
+    row: tuple, moments: Sequence[int], days: Sequence[int], dropped: list
+) -> tuple:
     values = list(row)
-    for index in positions:
+    for index in moments:
         value = values[index]
-        if isinstance(value, datetime) and value.tzinfo is None:
-            values[index] = value.replace(tzinfo=timezone.utc)
+        if not isinstance(value, datetime):
+            continue
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        if CH_MIN_TIME <= value <= CH_MAX_TIME:
+            values[index] = value
+        else:
+            values[index] = None
+            dropped[0] += 1
+    for index in days:
+        value = values[index]
+        if isinstance(value, datetime) or not isinstance(value, date):
+            continue
+        if not CH_MIN_DATE <= value <= CH_MAX_DATE:
+            values[index] = None
+            dropped[0] += 1
     return tuple(values)
 
 

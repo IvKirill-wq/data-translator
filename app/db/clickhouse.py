@@ -1,15 +1,27 @@
+import logging
 from contextlib import contextmanager
 from typing import Iterator, Sequence
 
 import clickhouse_connect
 
-from .base import DATETIME, Column, ConnParams, DbError, ensure_unique, split_table
-from .types import ch_ddl, ch_decimal_spec, ch_kind, stamp_utc
+from .base import (
+    DATE,
+    DATETIME,
+    DATETIMETZ,
+    Column,
+    ConnParams,
+    DbError,
+    ensure_unique,
+    split_table,
+)
+from .types import ch_ddl, ch_decimal_spec, ch_kind, fit_temporal
 
 try:
     from clickhouse_connect.driver.exceptions import ClickHouseError as DriverError
 except ImportError:
     DriverError = Exception
+
+LOG = logging.getLogger(__name__)
 
 ENGINE = 'ClickHouse'
 PEEK_SETTINGS = {'max_result_rows': '1', 'result_overflow_mode': 'break'}
@@ -165,14 +177,19 @@ class ClickHouseAdapter:
     ) -> int:
         database, name = self._target(table)
         names = [column.name for column in columns]
-        naive = [index for index, column in enumerate(columns) if column.kind == DATETIME]
+        moments = [
+            index for index, column in enumerate(columns)
+            if column.kind in (DATETIME, DATETIMETZ)
+        ]
+        days = [index for index, column in enumerate(columns) if column.kind == DATE]
+        dropped = [0]
         written = 0
         chunk: list[tuple] = []
         if clear:
             self._run([f'TRUNCATE TABLE {self._qualified(table)}'], f'не очистить таблицу {table}')
         with self._client() as client:
             for row in rows:
-                chunk.append(stamp_utc(row, naive) if naive else row)
+                chunk.append(fit_temporal(row, moments, days, dropped) if moments or days else row)
                 if len(chunk) >= batch:
                     self._send(client, database, name, names, chunk)
                     written += len(chunk)
@@ -180,6 +197,11 @@ class ClickHouseAdapter:
             if chunk:
                 self._send(client, database, name, names, chunk)
                 written += len(chunk)
+        if dropped[0]:
+            LOG.warning(
+                '%s: значений даты вне диапазона 1900-2299 заменено на NULL: %s',
+                ENGINE, dropped[0],
+            )
         return written
 
     def _send(
