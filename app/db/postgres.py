@@ -4,6 +4,7 @@ from typing import Iterator, Sequence
 
 import psycopg
 from psycopg import postgres, pq, sql
+from psycopg.adapt import Loader
 
 from .base import Column, ConnParams, DbError, ensure_unique, split_table
 from .types import clip_name, pg_ddl, pg_kind, pg_name
@@ -18,28 +19,33 @@ TEMPORAL_TYPES = ('date', 'timestamp', 'timestamptz')
 LENIENT_CACHE: dict = {}
 
 
-def lenient(base: type) -> type:
-    ready = LENIENT_CACHE.get(base)
+def lenient(native: type) -> type:
+    ready = LENIENT_CACHE.get(native)
     if ready is not None:
         return ready
 
-    class LenientLoader(base):
+    class LenientLoader(Loader):
+        format = native.format
         _warned = False
+
+        def __init__(self, oid, context=None):
+            super().__init__(oid, context)
+            self._native = native(oid, context)
 
         def load(self, data):
             try:
-                return super().load(data)
+                return self._native.load(data)
             except psycopg.DataError as error:
                 if not self._warned:
                     LOG.warning(
                         '%s: значение даты вне диапазона Python прочитано как NULL (%s)',
                         ENGINE, error,
                     )
-                    self._warned = True
+                    LenientLoader._warned = True
                 return None
 
-    LenientLoader.__name__ = 'Lenient' + base.__name__
-    LENIENT_CACHE[base] = LenientLoader
+    LenientLoader.__name__ = 'Lenient' + native.__name__
+    LENIENT_CACHE[native] = LenientLoader
     return LenientLoader
 
 
@@ -53,9 +59,19 @@ def lenient_loaders(conn) -> list:
         if info is None:
             continue
         for fmt in (pq.Format.TEXT, pq.Format.BINARY):
-            base = conn.adapters.get_loader(info.oid, fmt)
-            if base is not None:
-                found.append((info.oid, lenient(base)))
+            native = conn.adapters.get_loader(info.oid, fmt)
+            if native is None:
+                continue
+            try:
+                ready = lenient(native)
+                ready(info.oid, conn)
+            except Exception as error:
+                LOG.warning(
+                    '%s: загрузчик %s не подменить, бесконечные даты остаются ошибкой (%s)',
+                    ENGINE, getattr(native, '__name__', native), error,
+                )
+                continue
+            found.append((info.oid, ready))
     return found
 
 
