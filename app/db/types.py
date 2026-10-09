@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, tzinfo
+from zoneinfo import ZoneInfo
 from typing import Sequence
 
 from .base import (
@@ -111,13 +112,17 @@ CH_SAFE_DIGITS = 28
 CH_SAFE_DEFAULT_SCALE = 6
 CH_SAFE_DEFAULT_DECIMAL = (CH_SAFE_DIGITS - CH_SAFE_DEFAULT_SCALE, CH_SAFE_DEFAULT_SCALE)
 
+CH_SAFE_ZONE = ''
+CH_SAFE_DATETIME = f"DateTime('{CH_SAFE_ZONE}')" if CH_SAFE_ZONE else 'DateTime'
+
 CH_SAFE_DDL = {
-    DATE: 'Date',
-    DATETIME: 'DateTime',
-    DATETIMETZ: "DateTime('UTC')",
+    DATE: CH_SAFE_DATETIME,
+    DATETIME: CH_SAFE_DATETIME,
+    DATETIMETZ: CH_SAFE_DATETIME,
 }
 
-CH_RESTRICTED = ('Date32', 'DateTime64', 'Decimal')
+CH_RESTRICTED_EXACT = ('Date', 'Date32')
+CH_RESTRICTED_HEAD = ('DateTime64', 'Decimal')
 CH_TIMEZONE = re.compile(r"'([^']+)'")
 
 CH_CASTABLE = (
@@ -201,15 +206,30 @@ def safe_decimal(precision: int, scale: int) -> tuple[int, int]:
 
 
 def ch_safe_column(column: Column) -> Column:
+    if column.kind == DATE:
+        return replace(column, kind=DATETIME)
     if column.kind != DECIMAL:
         return column
     precision, scale = safe_decimal(int(column.precision or 0), int(column.scale or 0))
     return replace(column, precision=precision, scale=scale)
 
 
+def ch_safe_zone():
+    if not CH_SAFE_ZONE:
+        return None
+    if CH_SAFE_ZONE.upper() == 'UTC':
+        return timezone.utc
+    try:
+        return ZoneInfo(CH_SAFE_ZONE)
+    except Exception:
+        return None
+
+
 def restricted_core(type_name: str) -> str:
     core = unwrap_ch(strip_nullable(type_name)[0])
-    for name in CH_RESTRICTED:
+    if core in CH_RESTRICTED_EXACT:
+        return core
+    for name in CH_RESTRICTED_HEAD:
         if core.startswith(name):
             return name
     return ''
@@ -232,11 +252,11 @@ def ch_safe_type(type_name: str) -> str:
     if restricted == 'Decimal':
         precision, scale = safe_decimal(*ch_decimal_spec(type_name))
         body = f'Decimal({precision}, {scale})'
-    elif restricted == 'Date32':
-        body = 'Date'
+    elif restricted in ('Date', 'Date32'):
+        body = CH_SAFE_DATETIME
     elif restricted == 'DateTime64':
         zone = CH_TIMEZONE.search(core)
-        body = f"DateTime('{zone.group(1)}')" if zone else 'DateTime'
+        body = f"DateTime('{zone.group(1)}')" if zone else CH_SAFE_DATETIME
     else:
         body = core
     return f'Nullable({body})' if nullable else body
@@ -265,16 +285,17 @@ def fit_temporal(
     days: Sequence[int],
     dropped: list,
     limits: Limits = CH_WIDE_LIMITS,
+    zone: tzinfo = timezone.utc,
 ) -> tuple:
     values = list(row)
     for index in moments:
         value = values[index]
         if isinstance(value, date) and not isinstance(value, datetime):
-            value = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+            value = datetime(value.year, value.month, value.day, tzinfo=zone)
         if not isinstance(value, datetime):
             continue
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            value = value.replace(tzinfo=zone)
         if limits.min_time <= value <= limits.max_time:
             values[index] = value
         else:

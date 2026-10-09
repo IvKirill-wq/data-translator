@@ -1,5 +1,6 @@
 import logging
 from contextlib import contextmanager
+from datetime import timezone
 from typing import Iterator, Sequence
 
 import clickhouse_connect
@@ -18,6 +19,7 @@ from .types import (
     CH_SAFE_LIMITS,
     CH_WIDE_LIMITS,
     ch_ddl,
+    ch_safe_zone,
     ch_decimal_spec,
     ch_kind,
     ch_safe_column,
@@ -104,6 +106,11 @@ class ClickHouseAdapter:
                 client.close()
             except Exception:
                 pass
+
+    def _zone(self, client):
+        if not self._safe:
+            return timezone.utc
+        return ch_safe_zone() or getattr(client, 'server_tz', None) or timezone.utc
 
     def _target(self, table: str) -> tuple[str, str]:
         parsed = split_table(table)
@@ -200,9 +207,13 @@ class ClickHouseAdapter:
         if clear:
             self._run([f'TRUNCATE TABLE {self._qualified(table)}'], f'не очистить таблицу {table}')
         with self._client() as client:
+            zone = self._zone(client)
+            if moments:
+                LOG.info('%s: наивное время записано в часовом поясе %s', ENGINE, zone)
             for row in rows:
                 chunk.append(
-                    fit_temporal(row, moments, days, dropped, limits) if moments or days else row
+                    fit_temporal(row, moments, days, dropped, limits, zone)
+                    if moments or days else row
                 )
                 if len(chunk) >= batch:
                     self._send(client, database, name, names, chunk)
@@ -212,9 +223,10 @@ class ClickHouseAdapter:
                 self._send(client, database, name, names, chunk)
                 written += len(chunk)
         if dropped[0]:
+            last = limits.max_date.year if days else limits.max_time.year
             LOG.warning(
                 '%s: значений даты вне диапазона %s-%s заменено на NULL: %s',
-                ENGINE, limits.min_time.year, limits.max_date.year, dropped[0],
+                ENGINE, limits.min_time.year, last, dropped[0],
             )
         return written
 
