@@ -28,6 +28,7 @@ def conn_params(form, prefix: str) -> ConnParams:
         user=(getattr(form, prefix + '_user').data or '').strip(),
         password=getattr(form, prefix + '_password').data or '',
         database=(getattr(form, prefix + '_database').data or '').strip(),
+        safe_types=current_app.config['CLICKHOUSE_SAFE_TYPES'],
     )
 
 

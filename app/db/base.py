@@ -26,6 +26,7 @@ class ConnParams:
     user: str
     password: str
     database: str
+    safe_types: bool = True
 
 
 @dataclass(frozen=True)

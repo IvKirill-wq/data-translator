@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Sequence
 
@@ -86,8 +87,50 @@ PG_NAME_LIMIT = 63
 CH_PRECISION_LIMIT = 76
 CH_MIN_DATE = date(1900, 1, 1)
 CH_MAX_DATE = date(2299, 12, 31)
-CH_MIN_TIME = datetime(1900, 1, 1, tzinfo=timezone.utc)
-CH_MAX_TIME = datetime(2299, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+CH_WIDE_LIMITS = (
+    datetime(1900, 1, 1, tzinfo=timezone.utc),
+    datetime(2299, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+)
+CH_SAFE_LIMITS = (
+    datetime(1970, 1, 1, tzinfo=timezone.utc),
+    datetime(2106, 2, 7, 6, 28, 15, tzinfo=timezone.utc),
+)
+
+CH_SAFE_DIGITS = 28
+CH_SAFE_SCALE_LIMIT = CH_SAFE_DIGITS // 2
+CH_SAFE_DEFAULT_DECIMAL = (24, 4)
+
+CH_SAFE_KINDS = {
+    TEXT: TEXT,
+    INT: DECIMAL,
+    BIGINT: DECIMAL,
+    UBIGINT: DECIMAL,
+    FLOAT: FLOAT,
+    DECIMAL: DECIMAL,
+    BOOL: DECIMAL,
+    DATE: DATETIME,
+    DATETIME: DATETIME,
+    DATETIMETZ: DATETIME,
+    UUID: TEXT,
+}
+
+CH_SAFE_DDL = {
+    TEXT: 'String',
+    FLOAT: 'Float64',
+    DATETIME: 'DateTime',
+}
+
+CH_SAFE_PATTERN = re.compile(
+    r'^(?:String|Float64'
+    r'|DateTime(?:\(\s*\'[^\']*\'\s*\))?'
+    r'|Decimal\(\s*(\d+)\s*,\s*(\d+)\s*\))$'
+)
+CH_CASTABLE = (
+    'String', 'FixedString', 'Enum8', 'Enum16', 'UUID', 'IPv4', 'IPv6',
+    'Date', 'Date32', 'DateTime', 'DateTime64',
+    'Int8', 'Int16', 'Int32', 'Int64', 'UInt8', 'UInt16', 'UInt32', 'UInt64',
+    'Float32', 'Float64', 'Decimal', 'Bool', 'Boolean', 'Nothing',
+)
 
 
 def clip_name(name: str, limit: int = PG_NAME_LIMIT) -> str:
@@ -143,6 +186,74 @@ def ch_decimal_spec(type_name: str) -> tuple[int, int]:
     return int(first), int(second)
 
 
+def strip_nullable(type_name: str) -> tuple[str, bool]:
+    text = (type_name or '').strip()
+    head = 'Nullable('
+    if text.startswith(head) and text.endswith(')'):
+        return text[len(head):-1].strip(), True
+    return text, 'Nullable(' in text
+
+
+def safe_decimal(precision: int, scale: int) -> tuple[int, int]:
+    if not precision:
+        return CH_SAFE_DEFAULT_DECIMAL
+    scale = max(0, min(scale, CH_SAFE_SCALE_LIMIT))
+    precision = max(min(precision, CH_SAFE_DIGITS - scale), scale)
+    return precision, scale
+
+
+def ch_safe_kind(kind: str) -> str:
+    return CH_SAFE_KINDS.get(kind, TEXT)
+
+
+def ch_safe_column(column: Column) -> Column:
+    kind = ch_safe_kind(column.kind)
+    if kind != DECIMAL:
+        return replace(column, kind=kind, precision=0, scale=0)
+    if column.kind == DECIMAL:
+        precision, scale = safe_decimal(int(column.precision or 0), int(column.scale or 0))
+    else:
+        precision, scale = CH_SAFE_DIGITS, 0
+    return replace(column, kind=kind, precision=precision, scale=scale)
+
+
+def ch_safe_body(column: Column) -> str:
+    fitted = ch_safe_column(column)
+    if fitted.kind != DECIMAL:
+        return CH_SAFE_DDL.get(fitted.kind, CH_SAFE_DDL[TEXT])
+    return f'Decimal({fitted.precision}, {fitted.scale})'
+
+
+def ch_safe_type(type_name: str) -> str:
+    inner, nullable = strip_nullable(type_name)
+    precision, scale = ch_decimal_spec(inner)
+    column = Column(
+        name='', kind=ch_kind(inner), raw_type=inner, precision=precision, scale=scale
+    )
+    body = ch_safe_body(column)
+    return f'Nullable({body})' if nullable else body
+
+
+def ch_type_is_safe(type_name: str) -> bool:
+    inner, _ = strip_nullable(type_name)
+    found = CH_SAFE_PATTERN.match(inner)
+    if not found:
+        return False
+    precision, scale = found.groups()
+    if precision is None:
+        return True
+    return int(precision) + int(scale) <= CH_SAFE_DIGITS
+
+
+def ch_type_is_castable(type_name: str) -> bool:
+    inner, _ = strip_nullable(type_name)
+    inner = unwrap_ch(inner)
+    return any(
+        inner == name or inner.startswith(name + '(')
+        for name in CH_CASTABLE
+    )
+
+
 def decimal_spec(column: Column) -> tuple[int, int]:
     precision = max(0, int(column.precision or 0))
     scale = max(0, int(column.scale or 0))
@@ -153,16 +264,23 @@ def decimal_spec(column: Column) -> tuple[int, int]:
 
 
 def fit_temporal(
-    row: tuple, moments: Sequence[int], days: Sequence[int], dropped: list
+    row: tuple,
+    moments: Sequence[int],
+    days: Sequence[int],
+    dropped: list,
+    limits: tuple = CH_WIDE_LIMITS,
 ) -> tuple:
+    low, high = limits
     values = list(row)
     for index in moments:
         value = values[index]
+        if isinstance(value, date) and not isinstance(value, datetime):
+            value = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
         if not isinstance(value, datetime):
             continue
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
-        if CH_MIN_TIME <= value <= CH_MAX_TIME:
+        if low <= value <= high:
             values[index] = value
         else:
             values[index] = None
@@ -185,7 +303,9 @@ def pg_ddl(column: Column) -> str:
     return PG_DDL.get(column.kind, PG_DDL[TEXT])
 
 
-def ch_ddl(column: Column) -> str:
+def ch_ddl(column: Column, safe: bool = True) -> str:
+    if safe:
+        return 'Nullable({})'.format(ch_safe_body(column))
     if column.kind == DECIMAL:
         precision, scale = decimal_spec(column)
         if precision:

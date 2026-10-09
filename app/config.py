@@ -14,6 +14,8 @@ class Config:
     TRANSLATION_CHARS = int(os.environ.get('TRANSLATION_CHARS', '1200'))
     TRANSLATION_TIMEOUT = int(os.environ.get('TRANSLATION_TIMEOUT', '120'))
 
+    CLICKHOUSE_SAFE_TYPES = os.environ.get('CLICKHOUSE_SAFE_TYPES', '1') not in ('0', 'no', 'off')
+
     MAX_RU_DISTINCT_QTY = int(os.environ.get('MAX_RU_DISTINCT_QTY', '5000'))
     INSERT_BATCH = int(os.environ.get('INSERT_BATCH', '10000'))
 

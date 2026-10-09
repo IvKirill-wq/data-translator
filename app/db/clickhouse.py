@@ -14,7 +14,15 @@ from .base import (
     ensure_unique,
     split_table,
 )
-from .types import ch_ddl, ch_decimal_spec, ch_kind, fit_temporal
+from .types import (
+    CH_SAFE_LIMITS,
+    CH_WIDE_LIMITS,
+    ch_ddl,
+    ch_decimal_spec,
+    ch_kind,
+    ch_safe_column,
+    fit_temporal,
+)
 
 try:
     from clickhouse_connect.driver.exceptions import ClickHouseError as DriverError
@@ -69,6 +77,7 @@ class Stream:
 class ClickHouseAdapter:
     def __init__(self, params: ConnParams):
         self._database = params.database
+        self._safe = bool(params.safe_types)
         self._settings = {
             'host': params.host,
             'port': params.port,
@@ -131,7 +140,9 @@ class ClickHouseAdapter:
             return list(stream.columns)
 
     def fit_columns(self, columns: Sequence[Column]) -> list[Column]:
-        return list(columns)
+        if not self._safe:
+            return list(columns)
+        return [ch_safe_column(column) for column in columns]
 
     def table_columns(self, table: str) -> list[Column] | None:
         database, name = self._target(table)
@@ -151,7 +162,7 @@ class ClickHouseAdapter:
 
     def create_table(self, table: str, columns: Sequence[Column]) -> None:
         database, _ = self._target(table)
-        body = ', '.join(f'{qi(column.name)} {ch_ddl(column)}' for column in columns)
+        body = ', '.join(f'{qi(column.name)} {ch_ddl(column, self._safe)}' for column in columns)
         statements = [
             f'CREATE DATABASE IF NOT EXISTS {qi(database)}',
             f'CREATE TABLE IF NOT EXISTS {self._qualified(table)} ({body}) '
@@ -182,6 +193,7 @@ class ClickHouseAdapter:
             if column.kind in (DATETIME, DATETIMETZ)
         ]
         days = [index for index, column in enumerate(columns) if column.kind == DATE]
+        limits = CH_SAFE_LIMITS if self._safe else CH_WIDE_LIMITS
         dropped = [0]
         written = 0
         chunk: list[tuple] = []
@@ -189,7 +201,9 @@ class ClickHouseAdapter:
             self._run([f'TRUNCATE TABLE {self._qualified(table)}'], f'не очистить таблицу {table}')
         with self._client() as client:
             for row in rows:
-                chunk.append(fit_temporal(row, moments, days, dropped) if moments or days else row)
+                chunk.append(
+                    fit_temporal(row, moments, days, dropped, limits) if moments or days else row
+                )
                 if len(chunk) >= batch:
                     self._send(client, database, name, names, chunk)
                     written += len(chunk)
@@ -199,8 +213,8 @@ class ClickHouseAdapter:
                 written += len(chunk)
         if dropped[0]:
             LOG.warning(
-                '%s: значений даты вне диапазона 1900-2299 заменено на NULL: %s',
-                ENGINE, dropped[0],
+                '%s: значений даты вне диапазона %s-%s заменено на NULL: %s',
+                ENGINE, limits[0].year, limits[1].year, dropped[0],
             )
         return written
 
