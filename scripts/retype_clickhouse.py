@@ -14,11 +14,9 @@ from app.db.types import (
     ch_safe_type,
     ch_type_is_castable,
     ch_type_is_safe,
-    strip_nullable,
 )
 
 VIEW_ENGINES = ('View', 'MaterializedView', 'LiveView', 'WindowView')
-TEMPORAL = ('Date', 'Date32', 'DateTime', 'DateTime64')
 DECIMAL_PATTERN = 'Decimal('
 
 INVENTORY = """
@@ -37,8 +35,9 @@ COLUMNS = """
 
 def arguments():
     parser = argparse.ArgumentParser(
-        description='Приведение типов колонок ClickHouse к набору, который переваривает '
-                    'конструктор запросов: String, Float64, DateTime, Decimal(p, s) с p + s <= 28'
+        description='Приведение типов колонок ClickHouse, на которых зависает конструктор '
+                    'запросов: Date32 -> Date, DateTime64 -> DateTime, '
+                    'Decimal(p, s) с p + s > 28 -> Decimal в бюджете 28 разрядов'
     )
     parser.add_argument('--host', required=True)
     parser.add_argument('--port', type=int, default=8123)
@@ -84,22 +83,24 @@ def inventory(connection, database: str) -> dict:
     return tables
 
 
-def violations(connection, database: str, table: str, column: str,
-               current: str, target: str) -> int:
-    inner, _ = strip_nullable(current)
+def violations(connection, database: str, table: str, column: str, target: str) -> int:
     name = qi(column)
-    low, high = CH_SAFE_LIMITS
-    if any(inner.startswith(prefix) for prefix in TEMPORAL):
-        condition = (
-            f"countIf(toDate32({name}) < toDate32('{low:%Y-%m-%d}')"
-            f" or toDate32({name}) > toDate32('{high:%Y-%m-%d}'))"
-        )
-    elif target.startswith(DECIMAL_PATTERN) or f'({DECIMAL_PATTERN}' in target:
+    if 'Date(' in target or target.endswith('Date)') or target == 'Date':
+        low, high = CH_SAFE_LIMITS.min_date, CH_SAFE_LIMITS.max_date
+    elif 'DateTime' in target:
+        low, high = CH_SAFE_LIMITS.min_time.date(), CH_SAFE_LIMITS.max_time.date()
+    elif DECIMAL_PATTERN in target:
         digits = target[target.index('(') + 1:target.rindex(')')].split(',')
         whole = int(digits[0]) - int(digits[1])
         condition = f'countIf(abs(toFloat64({name})) >= 1e{whole})'
+        statement = f'select {condition} from {qi(database)}.{qi(table)}'
+        return int(connection.query(statement).result_rows[0][0])
     else:
         return 0
+    condition = (
+        f"countIf(toDate32({name}) < toDate32('{low:%Y-%m-%d}')"
+        f" or toDate32({name}) > toDate32('{high:%Y-%m-%d}'))"
+    )
     statement = f'select {condition} from {qi(database)}.{qi(table)}'
     return int(connection.query(statement).result_rows[0][0])
 
@@ -127,7 +128,7 @@ def plan(connection, options, tables: dict) -> tuple[list, list]:
             broken = 0
             if not options.no_check:
                 try:
-                    broken = violations(connection, options.database, table, column, current, target)
+                    broken = violations(connection, options.database, table, column, target)
                 except Exception as error:
                     manual.append((table, column, current, target, f'проверка не удалась: {error}'))
                     continue

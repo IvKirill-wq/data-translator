@@ -1,5 +1,5 @@
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from typing import Sequence
 
@@ -17,6 +17,14 @@ from .base import (
     UUID,
     Column,
 )
+
+@dataclass(frozen=True)
+class Limits:
+    min_time: datetime
+    max_time: datetime
+    min_date: date
+    max_date: date
+
 
 PG_DDL = {
     TEXT: 'text',
@@ -85,46 +93,33 @@ CH_DECIMAL_WIDTH = {'32': 9, '64': 18, '128': 38, '256': 76}
 
 PG_NAME_LIMIT = 63
 CH_PRECISION_LIMIT = 76
-CH_MIN_DATE = date(1900, 1, 1)
-CH_MAX_DATE = date(2299, 12, 31)
-CH_WIDE_LIMITS = (
+
+CH_WIDE_LIMITS = Limits(
     datetime(1900, 1, 1, tzinfo=timezone.utc),
     datetime(2299, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+    date(1900, 1, 1),
+    date(2299, 12, 31),
 )
-CH_SAFE_LIMITS = (
+CH_SAFE_LIMITS = Limits(
     datetime(1970, 1, 1, tzinfo=timezone.utc),
     datetime(2106, 2, 7, 6, 28, 15, tzinfo=timezone.utc),
+    date(1970, 1, 1),
+    date(2149, 6, 6),
 )
 
 CH_SAFE_DIGITS = 28
 CH_SAFE_SCALE_LIMIT = CH_SAFE_DIGITS // 2
 CH_SAFE_DEFAULT_DECIMAL = (24, 4)
 
-CH_SAFE_KINDS = {
-    TEXT: TEXT,
-    INT: DECIMAL,
-    BIGINT: DECIMAL,
-    UBIGINT: DECIMAL,
-    FLOAT: FLOAT,
-    DECIMAL: DECIMAL,
-    BOOL: DECIMAL,
-    DATE: DATETIME,
-    DATETIME: DATETIME,
-    DATETIMETZ: DATETIME,
-    UUID: TEXT,
-}
-
 CH_SAFE_DDL = {
-    TEXT: 'String',
-    FLOAT: 'Float64',
+    DATE: 'Date',
     DATETIME: 'DateTime',
+    DATETIMETZ: "DateTime('UTC')",
 }
 
-CH_SAFE_PATTERN = re.compile(
-    r'^(?:String|Float64'
-    r'|DateTime(?:\(\s*\'[^\']*\'\s*\))?'
-    r'|Decimal\(\s*(\d+)\s*,\s*(\d+)\s*\))$'
-)
+CH_RESTRICTED = ('Date32', 'DateTime64', 'Decimal')
+CH_TIMEZONE = re.compile(r"'([^']+)'")
+
 CH_CASTABLE = (
     'String', 'FixedString', 'Enum8', 'Enum16', 'UUID', 'IPv4', 'IPv6',
     'Date', 'Date32', 'DateTime', 'DateTime64',
@@ -202,54 +197,52 @@ def safe_decimal(precision: int, scale: int) -> tuple[int, int]:
     return precision, scale
 
 
-def ch_safe_kind(kind: str) -> str:
-    return CH_SAFE_KINDS.get(kind, TEXT)
-
-
 def ch_safe_column(column: Column) -> Column:
-    kind = ch_safe_kind(column.kind)
-    if kind != DECIMAL:
-        return replace(column, kind=kind, precision=0, scale=0)
-    if column.kind == DECIMAL:
-        precision, scale = safe_decimal(int(column.precision or 0), int(column.scale or 0))
-    else:
-        precision, scale = CH_SAFE_DIGITS, 0
-    return replace(column, kind=kind, precision=precision, scale=scale)
+    if column.kind != DECIMAL:
+        return column
+    precision, scale = safe_decimal(int(column.precision or 0), int(column.scale or 0))
+    return replace(column, precision=precision, scale=scale)
 
 
-def ch_safe_body(column: Column) -> str:
-    fitted = ch_safe_column(column)
-    if fitted.kind != DECIMAL:
-        return CH_SAFE_DDL.get(fitted.kind, CH_SAFE_DDL[TEXT])
-    return f'Decimal({fitted.precision}, {fitted.scale})'
+def restricted_core(type_name: str) -> str:
+    core = unwrap_ch(strip_nullable(type_name)[0])
+    for name in CH_RESTRICTED:
+        if core.startswith(name):
+            return name
+    return ''
+
+
+def ch_type_is_safe(type_name: str) -> bool:
+    core = restricted_core(type_name)
+    if not core:
+        return True
+    if core != 'Decimal':
+        return False
+    precision, scale = ch_decimal_spec(type_name)
+    return bool(precision) and precision + scale <= CH_SAFE_DIGITS
 
 
 def ch_safe_type(type_name: str) -> str:
     inner, nullable = strip_nullable(type_name)
-    precision, scale = ch_decimal_spec(inner)
-    column = Column(
-        name='', kind=ch_kind(inner), raw_type=inner, precision=precision, scale=scale
-    )
-    body = ch_safe_body(column)
+    core = unwrap_ch(inner)
+    restricted = restricted_core(type_name)
+    if restricted == 'Decimal':
+        precision, scale = safe_decimal(*ch_decimal_spec(type_name))
+        body = f'Decimal({precision}, {scale})'
+    elif restricted == 'Date32':
+        body = 'Date'
+    elif restricted == 'DateTime64':
+        zone = CH_TIMEZONE.search(core)
+        body = f"DateTime('{zone.group(1)}')" if zone else 'DateTime'
+    else:
+        body = core
     return f'Nullable({body})' if nullable else body
 
 
-def ch_type_is_safe(type_name: str) -> bool:
-    inner, _ = strip_nullable(type_name)
-    found = CH_SAFE_PATTERN.match(inner)
-    if not found:
-        return False
-    precision, scale = found.groups()
-    if precision is None:
-        return True
-    return int(precision) + int(scale) <= CH_SAFE_DIGITS
-
-
 def ch_type_is_castable(type_name: str) -> bool:
-    inner, _ = strip_nullable(type_name)
-    inner = unwrap_ch(inner)
+    core = unwrap_ch(strip_nullable(type_name)[0])
     return any(
-        inner == name or inner.startswith(name + '(')
+        core == name or core.startswith(name + '(')
         for name in CH_CASTABLE
     )
 
@@ -268,9 +261,8 @@ def fit_temporal(
     moments: Sequence[int],
     days: Sequence[int],
     dropped: list,
-    limits: tuple = CH_WIDE_LIMITS,
+    limits: Limits = CH_WIDE_LIMITS,
 ) -> tuple:
-    low, high = limits
     values = list(row)
     for index in moments:
         value = values[index]
@@ -280,7 +272,7 @@ def fit_temporal(
             continue
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
-        if low <= value <= high:
+        if limits.min_time <= value <= limits.max_time:
             values[index] = value
         else:
             values[index] = None
@@ -289,7 +281,7 @@ def fit_temporal(
         value = values[index]
         if isinstance(value, datetime) or not isinstance(value, date):
             continue
-        if not CH_MIN_DATE <= value <= CH_MAX_DATE:
+        if not limits.min_date <= value <= limits.max_date:
             values[index] = None
             dropped[0] += 1
     return tuple(values)
@@ -304,10 +296,12 @@ def pg_ddl(column: Column) -> str:
 
 
 def ch_ddl(column: Column, safe: bool = True) -> str:
-    if safe:
-        return 'Nullable({})'.format(ch_safe_body(column))
     if column.kind == DECIMAL:
-        precision, scale = decimal_spec(column)
+        if safe:
+            precision, scale = safe_decimal(int(column.precision or 0), int(column.scale or 0))
+        else:
+            precision, scale = decimal_spec(column)
         if precision:
             return f'Nullable(Decimal({precision}, {scale}))'
-    return 'Nullable({})'.format(CH_DDL.get(column.kind, CH_DDL[TEXT]))
+    body = CH_SAFE_DDL.get(column.kind) if safe else None
+    return 'Nullable({})'.format(body or CH_DDL.get(column.kind, CH_DDL[TEXT]))

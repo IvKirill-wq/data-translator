@@ -214,7 +214,7 @@ class ClickHouseAdapter:
         if dropped[0]:
             LOG.warning(
                 '%s: значений даты вне диапазона %s-%s заменено на NULL: %s',
-                ENGINE, limits[0].year, limits[1].year, dropped[0],
+                ENGINE, limits.min_time.year, limits.max_date.year, dropped[0],
             )
         return written
 
