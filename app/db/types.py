@@ -108,8 +108,8 @@ CH_SAFE_LIMITS = Limits(
 )
 
 CH_SAFE_DIGITS = 28
-CH_SAFE_SCALE_LIMIT = CH_SAFE_DIGITS // 2
-CH_SAFE_DEFAULT_DECIMAL = (24, 4)
+CH_SAFE_DEFAULT_SCALE = 6
+CH_SAFE_DEFAULT_DECIMAL = (CH_SAFE_DIGITS - CH_SAFE_DEFAULT_SCALE, CH_SAFE_DEFAULT_SCALE)
 
 CH_SAFE_DDL = {
     DATE: 'Date',
@@ -192,9 +192,12 @@ def strip_nullable(type_name: str) -> tuple[str, bool]:
 def safe_decimal(precision: int, scale: int) -> tuple[int, int]:
     if not precision:
         return CH_SAFE_DEFAULT_DECIMAL
-    scale = max(0, min(scale, CH_SAFE_SCALE_LIMIT))
-    precision = max(min(precision, CH_SAFE_DIGITS - scale), scale)
-    return precision, scale
+    scale = max(0, scale)
+    if precision + scale <= CH_SAFE_DIGITS:
+        return max(precision, scale), scale
+    scale = min(scale, CH_SAFE_DEFAULT_SCALE)
+    precision = min(precision, CH_SAFE_DIGITS - scale)
+    return max(precision, scale), scale
 
 
 def ch_safe_column(column: Column) -> Column:
