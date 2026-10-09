@@ -12,6 +12,7 @@ from app.db.clickhouse import qi
 from app.db.types import (
     CH_SAFE_LIMITS,
     ch_decimal_spec,
+    ch_zone,
     ch_safe_type,
     ch_type_is_castable,
     ch_type_is_safe,
@@ -137,6 +138,14 @@ def rounding(current: str, target: str) -> str:
     return ''
 
 
+def zone_shift(current: str, target: str) -> str:
+    before = ch_zone(current)
+    if before and before != ch_zone(target):
+        return (f'показ сместится с пояса {before} на пояс сервера: '
+                'дата сохранится, время суток сдвинется')
+    return ''
+
+
 def view_reason(facts: dict) -> str:
     if facts['engine'] != PLAIN_VIEW:
         return f'представление {facts["engine"]}: только вручную'
@@ -187,7 +196,7 @@ def plan(connection, options, tables: dict) -> tuple[list, list]:
                     f'{broken} значений не влезут в новый тип (--force чтобы всё равно)',
                 ))
             else:
-                notes = [rounding(current, target)]
+                notes = [rounding(current, target), zone_shift(current, target)]
                 if broken:
                     notes.append(f'принудительно, {broken} значений потеряются')
                 ready.append((table, column, current, target, '; '.join(filter(None, notes))))

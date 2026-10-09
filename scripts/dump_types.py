@@ -10,12 +10,11 @@ sys.path.insert(0, str(BASE_DIR))
 import clickhouse_connect
 
 from app.db.clickhouse import qi
-from app.db.types import CH_SAFE_DIGITS, ch_decimal_spec, strip_nullable
+from app.db.types import CH_SAFE_DIGITS, CH_SAFE_ZONE, ch_decimal_spec, ch_zone, strip_nullable
 
 KNOWN_SCALARS = (
     'String', 'Float32', 'Float64', 'Bool', 'UUID',
     'Int8', 'Int16', 'Int32', 'Int64', 'UInt8', 'UInt16', 'UInt32', 'UInt64',
-    'DateTime',
 )
 KNOWN_ENGINES = (
     'MergeTree', 'ReplacingMergeTree', 'SummingMergeTree', 'AggregatingMergeTree',
@@ -92,8 +91,13 @@ def judge_type(type_name: str) -> str:
         return ''
     if core.startswith('DateTime64'):
         return 'DateTime64 — драйвер его не знает'
-    if core.startswith('DateTime('):
-        return ''
+    if core == 'DateTime' or core.startswith('DateTime('):
+        zone = ch_zone(core)
+        if zone == CH_SAFE_ZONE:
+            return ''
+        if zone:
+            return f"метка часового пояса '{zone}' в типе — ожидается DateTime без метки"
+        return f"DateTime без метки — ожидается DateTime('{CH_SAFE_ZONE}')"
     if core in ('Date', 'Date32'):
         return 'тип даты вместо DateTime'
     if core.startswith('Decimal'):
@@ -122,6 +126,10 @@ def judge_name(name: str) -> str:
         return 'имя длиннее 63 байт'
     if not PLAIN_NAME.match(name):
         return 'необычные символы в имени'
+    if ' ' in name:
+        return 'пробел внутри имени'
+    if name[0].isdigit():
+        return 'имя начинается с цифры'
     return ''
 
 
@@ -158,8 +166,10 @@ def grouped(entries: dict, title: str) -> None:
     print(f'--- {title} ---')
     for key, places in sorted(entries.items(), key=lambda item: (-len(item[1]), item[0])):
         tables = {table for table, _ in places}
-        print(f'  {key}: колонок {len(places)} в объектах {len(tables)}')
-        shown = ', '.join(f'{table}.{column}' for table, column in places[:EXAMPLES])
+        print(f'  {key}: {len(places)} в объектах {len(tables)}')
+        shown = ', '.join(
+            '.'.join(part for part in place if part) for place in places[:EXAMPLES]
+        )
         tail = f', и ещё {len(places) - EXAMPLES}' if len(places) > EXAMPLES else ''
         print(f'      {shown}{tail}')
 
@@ -175,12 +185,22 @@ def report(connection, options, database: str, engine: str) -> int:
     doubts: dict = {}
     defaults: dict = {}
     names: dict = {}
+    objects: dict = {}
+    nullable_keys: dict = {}
     engines: dict = {}
     broken: list = []
 
     for name, table_engine, sorting_key, primary_key, rows, _ in tables:
         engines.setdefault(table_engine, []).append(name)
+        trouble = judge_name(name)
+        if trouble:
+            objects.setdefault(trouble, []).append((name, ''))
+        keys = set()
+        for text in (sorting_key, primary_key):
+            keys.update(part.strip().strip('`') for part in (text or '').split(',') if part.strip())
         for position, column, type_name, kind, expression in columns.get(name, []):
+            if column in keys and 'Nullable' in type_name:
+                nullable_keys.setdefault(type_name, []).append((name, column))
             kinds.setdefault(type_name, []).append((name, column))
             trouble = judge_type(type_name)
             if trouble:
@@ -199,6 +219,8 @@ def report(connection, options, database: str, engine: str) -> int:
     grouped(doubts, 'ВНЕ ПРОВЕРЕННОГО ПЕРЕЧНЯ — первые подозреваемые')
     grouped(defaults, 'колонки с DEFAULT/MATERIALIZED/ALIAS')
     grouped(names, 'подозрительные имена колонок')
+    grouped(objects, 'подозрительные имена объектов')
+    grouped(nullable_keys, 'Nullable в ключе сортировки')
 
     print()
     print('--- движки объектов ---')

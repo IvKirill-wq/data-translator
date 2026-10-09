@@ -225,6 +225,11 @@ def ch_safe_zone():
         return None
 
 
+def ch_zone(type_name: str) -> str:
+    found = CH_TIMEZONE.search(type_name or '')
+    return found.group(1) if found else ''
+
+
 def restricted_core(type_name: str) -> str:
     core = unwrap_ch(strip_nullable(type_name)[0])
     if core in CH_RESTRICTED_EXACT:
@@ -232,6 +237,8 @@ def restricted_core(type_name: str) -> str:
     for name in CH_RESTRICTED_HEAD:
         if core.startswith(name):
             return name
+    if core == 'DateTime' or core.startswith('DateTime('):
+        return '' if ch_zone(core) == CH_SAFE_ZONE else 'DateTime'
     return ''
 
 
@@ -254,9 +261,8 @@ def ch_safe_type(type_name: str) -> str:
         body = f'Decimal({precision}, {scale})'
     elif restricted in ('Date', 'Date32'):
         body = CH_SAFE_DATETIME
-    elif restricted == 'DateTime64':
-        zone = CH_TIMEZONE.search(core)
-        body = f"DateTime('{zone.group(1)}')" if zone else CH_SAFE_DATETIME
+    elif restricted in ('DateTime', 'DateTime64'):
+        body = CH_SAFE_DATETIME
     else:
         body = core
     return f'Nullable({body})' if nullable else body
