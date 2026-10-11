@@ -3,6 +3,7 @@ import os
 import statistics
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,13 +23,35 @@ def arguments():
     parser.add_argument('--key', default=os.environ.get('LIBRE_TRANSLATE_KEY', ''))
     parser.add_argument('--file', required=True)
     parser.add_argument('--tsv', action='store_true')
-    parser.add_argument('--glossary', default=str(BASE_DIR / 'glossary.tsv'))
+    parser.add_argument('--glossary', default=str(BASE_DIR / 'glossary.ini'))
     parser.add_argument('--batch', type=int, default=24)
     parser.add_argument('--chars', type=int, default=1200)
     parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--limit', type=int, default=60)
     parser.add_argument('--top', type=int, default=10)
+    parser.add_argument('--jobs', default='1')
     return parser.parse_args()
+
+
+def job_counts(text: str) -> list:
+    counts = []
+    for part in (text or '').split(','):
+        part = part.strip()
+        if part.isdigit() and int(part) > 0 and int(part) not in counts:
+            counts.append(int(part))
+    return counts or [1]
+
+
+def measure(client, values: list, jobs: int) -> float:
+    groups = [values[index::jobs] for index in range(jobs)]
+    groups = [group for group in groups if group]
+    started = time.monotonic()
+    if len(groups) == 1:
+        client.translate(groups[0])
+    else:
+        with ThreadPoolExecutor(max_workers=len(groups)) as pool:
+            list(pool.map(client.translate, groups))
+    return time.monotonic() - started
 
 
 def read_values(options) -> list:
@@ -91,6 +114,30 @@ def main() -> None:
     for spent, length, text, answer in sorted(rows, reverse=True)[:options.top]:
         print(f'  {spent:6.2f} с  {length:5} симв.  {text[:70]}')
         print(f'          -> {str(answer)[:70]}')
+
+    counts = job_counts(options.jobs)
+    if counts != [1]:
+        print()
+        print('--- параллельные запросы к движку ---')
+        timings = {}
+        single = 0.0
+        for jobs in counts:
+            spent = measure(client, prepared, jobs)
+            timings[jobs] = spent
+            single = single or spent
+            speed = len(prepared) / spent * 60 if spent else 0
+            note = f'   ускорение {single / spent:.1f}x' if spent else ''
+            print(f'  потоков {jobs}: {spent:.1f} с, {speed:.0f} значений/мин{note}')
+        best = min(timings, key=lambda jobs: timings[jobs])
+        gain = single / timings[best] if timings[best] else 1.0
+        print()
+        if gain >= 1.4:
+            print(f'[+] движок недогружен: {best} параллельных запросов дают ~{gain:.1f}x. '
+                  'Поднимайте ARGOS_INTER_THREADS и слайте батчи параллельно')
+        else:
+            print('[=] движок уже занимает все ядра: параллелизм и второй экземпляр '
+                  'не помогут, помогут ARGOS_BEAM_SIZE=1, ARGOS_COMPUTE_TYPE=int8 '
+                  'и больше ядер')
 
     print()
     batch = prepared[:options.batch]
